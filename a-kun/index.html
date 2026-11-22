@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clay XR</title>
+<style>
+  :root {
+    --bg: #1d2026; --panel: rgba(20, 23, 28, 0.86); --fg: #e8eaee; --muted: #9aa1ae;
+    --line: #3a404c; --btn: #2c313b;
+  }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden;
+    font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  #app, #app canvas { position: fixed; inset: 0; display: block; }
+  #ui { position: fixed; top: 16px; left: 16px; width: 264px; max-width: calc(100vw - 32px);
+    max-height: calc(100vh - 32px); overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px;
+    backdrop-filter: blur(8px); font-size: 13px; box-sizing: border-box; }
+  h1 { font-size: 16px; margin: 0 0 10px; letter-spacing: .02em; }
+  h1 small { color: var(--muted); font-weight: normal; font-size: 12px; margin-left: 6px; }
+  .label { color: var(--muted); font-size: 11px; margin: 10px 0 6px; }
+  #modes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  button { font: inherit; color: var(--fg); background: var(--btn); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 6px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: #6b7384; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  #modes button.active { background: var(--accent); color: #111; border-color: #fff; font-weight: 600; }
+  .row { display: flex; gap: 6px; margin-top: 10px; }
+  .row button { flex: 1; }
+  .size { display: flex; align-items: center; gap: 8px; }
+  .size input { flex: 1; accent-color: #c98060; }
+  #sizeVal { width: 40px; text-align: right; font-variant-numeric: tabular-nums; }
+  .xr button { background: #c98060; color: #111; border-color: #e3a487; font-weight: 600; }
+  #xrmsg { color: var(--muted); font-size: 11px; margin: 6px 0 0; min-height: 1em; }
+  details { margin-top: 10px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+  summary { cursor: pointer; color: var(--fg); }
+  .param { display: grid; grid-template-columns: 84px 1fr 42px; align-items: center; gap: 6px; margin-top: 6px; color: var(--fg); }
+  .param .pname { font-size: 12px; }
+  .param input { width: 100%; accent-color: #c98060; }
+  .param .pval { text-align: right; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  details ul { padding-left: 18px; margin: 6px 0 0; }
+  kbd { background: #2c313b; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 11px; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app"></div>
+<div id="ui">
+  <h1>Clay XR <small>試作 <span id="ver"></span></small></h1>
+  <div class="label">道具</div>
+  <div id="modes"></div>
+  <div class="label">ブラシの大きさ</div>
+  <div class="size"><input id="size" type="range" min="6" max="40" step="1"><span id="sizeVal"></span></div>
+  <div class="row">
+    <button id="undo">↶ 戻す</button><button id="reset">リセット</button><button id="export">GLB保存</button>
+  </div>
+  <div class="row xr">
+    <button id="vr">VRで開始</button><button id="ar">パススルー</button>
+  </div>
+  <p id="xrmsg"></p>
+  <details id="props">
+    <summary>粘土の性質</summary>
+    <div id="params"></div>
+    <div class="row"><button id="paramReset">初期値に戻す</button></div>
+  </details>
+  <details>
+    <summary>操作方法</summary>
+    <ul>
+      <li>粘土の上を左ドラッグ: 選んだ道具で造形</li>
+      <li>何もない所を左ドラッグ: 視点を回す / 右ドラッグ: 平行移動 / ホイール: ズーム</li>
+      <li><kbd>1</kbd>〜<kbd>4</kbd> 道具 / <kbd>[</kbd> <kbd>]</kbd> 大きさ / <kbd>⌘Z</kbd> 戻す</li>
+      <li>XR: 手のひらで触れる=こねる/なでる、盛るは人差し指、つまむ=引っ張る、空中でつまむ=移動、両手でつまむ=回転・拡大</li>
+    </ul>
+  </details>
+</div>
+<script type="module" src="./src/main.js?v=0.5.0"></script>
+</body>
+</html>
