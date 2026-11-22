@@ -27,6 +27,7 @@ namespace AKun
         const float START_R = 0.0865f;                 // 最初の球の半径 (粘土の座標, m)
         const float CUBE_HALF = START_R * CUBE_SCALE;  // 最初の球の半径 (m)
         const float PANEL_Z = CUBE_HALF + 0.06f;       // パネルを置く位置: 球の手前から 6cm 手前
+        const float PROP_BEHIND = 0.45f;               // 粘土の性質のパネル: 頭からこれだけ後ろ (m)
 
         // 押し込みの深さ (本物の手が粘土の表面からめり込んだ深さ, m) と、なでる→こねるの切り替え
         static float kneadFrom = 0.015f;  // これより浅いと、こねずになでるだけ
@@ -400,8 +401,11 @@ namespace AKun
             }
             pdefs.Add(new ButtonDef { id = "paramReset", label = () => "初期値に戻す", x = 0, y = -PARAMS.Count * (sh + sgap), w = sw, h = bh, onPress = ResetParams });
             propPanel = new ButtonPanel(workspace, "prop-panel", pdefs, new[] { "粘土の性質 (指でなぞって調整)" });
-            propPanel.group.localPosition = new Vector3(0.3f, 0.1f, -PANEL_Z);
-            propPanel.group.localRotation = Quaternion.Euler(0.3f * Mathf.Rad2Deg, 0.6f * Mathf.Rad2Deg, 0);
+            // スタッフが調整する項目なので、体験者の目に入らないよう背後に置く (振り返ると手が届く)。
+            // 頭は作業台の中心から RECENTER_FORWARD + 粘土の半径 だけ手前にいるので、そこからさらに PROP_BEHIND 後ろ。
+            // 板の表を +Z (作業台の方 = 振り返った体験者の方) に向け、少し上を向けて傾ける
+            propPanel.group.localPosition = new Vector3(0, 0, -(RECENTER_FORWARD + CUBE_HALF + PROP_BEHIND));
+            propPanel.group.localRotation = Quaternion.Euler(0.3f * Mathf.Rad2Deg, 180f, 0);
         }
 
         void SetBrush(float r) => brushR = Mathf.Clamp(r, 0.01f, 0.12f);
