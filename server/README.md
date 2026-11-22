@@ -18,10 +18,12 @@ bun run typecheck
 | `JWT_SECRET` | 開発時は起動ごとに生成 | アクセストークンの署名鍵。`NODE_ENV=production` では必須 |
 | `DATABASE_URL` | なし | PostgreSQL の接続先。無ければ PGlite（プロセス内の Postgres）で動く |
 | `PGLITE_DIR` | なし（メモリ） | PGlite の保存先 |
+| `BASE_PATH` | なし | この環境の URL の前置き（例 `/a-kun-01`）。前置きの無いリクエストは 404 |
+| `PUBLIC_URL` | `http://localhost:<PORT>` | 外から見た URL。`BASE_PATH` を足して OpenAPI の `servers` に載せる |
 
 ## いま動くもの
 
-本番：`https://bibai.t0waxx.com`（OpenAPI は `/v1/openapi.json`）
+本番：`https://bibai.t0waxx.com`（OpenAPI は `/v1/openapi.json`）。他の環境は `https://bibai.t0waxx.com/<環境>/v1/...`
 
 | 種類 | エンドポイント |
 |---|---|
@@ -36,4 +38,5 @@ bun run typecheck
 
 ## デプロイ
 
-`../deploy/deploy.sh` で server/ を bibai-game VM（wds-pve VMID 100）へ送り、compose で作り直す。
+環境（prod / stg / dev / a-kun-01〜03 / so-ma-01〜03）、デプロイ、DB のリセット・コピーは [`../deploy/README.md`](../deploy/README.md)。
+環境は `BASE_PATH`（例 `/a-kun-01`）で分かれ、クライアントの接続先は `https://bibai.t0waxx.com/a-kun-01` のようになる。
