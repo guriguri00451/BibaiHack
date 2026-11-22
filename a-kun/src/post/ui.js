@@ -39,6 +39,9 @@ export function initPost(h) {
     h.log(msg);
   }
 
+  // 体積をそろえるために大きさを直した倍率 (ほぼ 1 のときは出さない)
+  const sizeNote = (ex) => (Math.abs(ex.factor - 1) > 0.01 ? `、大きさを ×${ex.factor.toFixed(2)} にそろえた` : '');
+
   // 粘土の位置・回転・大きさ (仕様 3.5 の Transform)。位置は底面の中心
   const transformOf = (ex) => ({
     position: ex.anchor.toArray(),
@@ -59,12 +62,12 @@ export function initPost(h) {
       if (item) {
         await target.updateObject({ objectId: item.id, assetUrl, transform });
         Object.assign(item, { version: item.version + 1, bytes: ex.bytes, snapshot: h.snapshot() });
-        toast(`#${item.n} を更新しました (${kb(ex.bytes.byteLength)})`, 'good');
+        toast(`#${item.n} を更新しました (${kb(ex.bytes.byteLength)}${sizeNote(ex)})`, 'good');
       } else {
         const { objectId } = await target.createObject({ assetUrl, transform });
         posted.set(objectId, { id: objectId, n: ++counter, version: 1, bytes: ex.bytes, snapshot: h.snapshot() });
         editingId = objectId;
-        toast(`#${counter} を投稿しました (${kb(ex.bytes.byteLength)})`, 'good');
+        toast(`#${counter} を投稿しました (${kb(ex.bytes.byteLength)}${sizeNote(ex)})`, 'good');
       }
     } catch (err) {
       toast(err?.message || String(err), 'error');
@@ -154,7 +157,7 @@ export function initPost(h) {
       <ol class="steps">
         <li>左のパネルの道具で<b>形を作る</b></li>
         <li>「塗る」と色見本で<b>色を付ける</b></li>
-        <li><b>投稿</b>する (直したら「更新して投稿」)</li>
+        <li><b>投稿</b>する (直したら「更新して投稿」)。大きさは体積でそろえられる</li>
       </ol>
       <button class="primary wide" data-act="post" ${busy ? 'disabled' : ''}>${busy ? '送信中…' : editing ? `#${editing.n} を更新して投稿` : '投稿する'}</button>
       <div class="row2">

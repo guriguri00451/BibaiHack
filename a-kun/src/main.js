@@ -3,9 +3,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ClayField } from './sdf.js?v=0.6.3';
-import { ButtonPanel } from './panel.js?v=0.6.3';
-import { initPost } from './post/ui.js?v=0.6.3';
+import { ClayField } from './sdf.js?v=0.6.4';
+import { ButtonPanel } from './panel.js?v=0.6.4';
+import { initPost } from './post/ui.js?v=0.6.4';
 
 // ================= 設定 =================
 const CLAY_HOME = new THREE.Vector3(0, 1.1, -0.45);
@@ -798,7 +798,7 @@ let recenterPending = false;
 let xrStartT = 0;
 
 // ---- 状態表示 (画面の UI と、XR 中は目の前の文字板) ----
-const VERSION = '0.6.3';
+const VERSION = '0.6.4';
 const logLines = [];
 function log(msg) {
   const line = `${new Date().toLocaleTimeString()} ${msg}`;
@@ -1030,8 +1030,27 @@ async function checkXR() {
 }
 checkXR();
 
+// 投稿するモデルの体積 (m³)。作ったモデルは、この体積になるように大きさをそろえて投稿する。
+// 初期の立方体 (一辺 14cm、角を丸めたもの) がほぼ等倍になる値
+const POST_VOLUME = 0.0027;
+const POST_FACTOR = [0.2, 5]; // 補正の倍率の範囲 (小さすぎる・大きすぎる粘土でも極端にならないように)
+
+// 閉じたメッシュの体積 (符号付きの四面体の合計)
+function meshVolume(geo) {
+  const pos = geo.attributes.position.array, idx = geo.index.array;
+  let v = 0;
+  for (let i = 0; i < idx.length; i += 3) {
+    const a = idx[i] * 3, b = idx[i + 1] * 3, c = idx[i + 2] * 3;
+    v += pos[a] * (pos[b + 1] * pos[c + 2] - pos[b + 2] * pos[c + 1])
+      - pos[a + 1] * (pos[b] * pos[c + 2] - pos[b + 2] * pos[c])
+      + pos[a + 2] * (pos[b] * pos[c + 1] - pos[b + 1] * pos[c]);
+  }
+  return Math.abs(v) / 6;
+}
+
 // 粘土を 1 つのメッシュ (頂点カラー付き) の GLB にする。
-// 原点は底面の中心。配置 (Transform) はこの点の位置・粘土の回転・大きさになる
+// 体積が POST_VOLUME になるように大きさをそろえる (手で粘土を拡大・縮小していても、作った形の量が同じなら同じ大きさになる)。
+// 原点は底面の中心。配置 (Transform) はこの点の位置と粘土の回転で、scale は 1
 async function exportClay() {
   clay.updateMatrixWorld();
   const geos = [];
@@ -1042,6 +1061,11 @@ async function exportClay() {
   const bb = merged.boundingBox;
   const cx = (bb.min.x + bb.max.x) / 2, cz = (bb.min.z + bb.max.z) / 2, by = bb.min.y;
   merged.translate(-cx, -by, -cz);
+  // 大きさをそろえる (底面の中心を動かさずに拡大・縮小する)
+  const rawVolume = meshVolume(merged);
+  const factor = rawVolume > 1e-9
+    ? THREE.MathUtils.clamp(Math.cbrt(POST_VOLUME / rawVolume), POST_FACTOR[0], POST_FACTOR[1]) : 1;
+  merged.scale(factor, factor, factor);
   const mesh = new THREE.Mesh(merged, new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.78, metalness: 0 }));
   mesh.name = 'clay';
   const bytes = await new GLTFExporter().parseAsync(mesh, { binary: true });
@@ -1051,7 +1075,9 @@ async function exportClay() {
     bytes,
     anchor: clay.localToWorld(new THREE.Vector3(cx, by, cz)),
     quaternion: clay.quaternion.clone(),
-    scale: clay.scale.x,
+    scale: 1,
+    factor,                       // 大きさの補正の倍率
+    volume: rawVolume * factor ** 3, // 投稿するモデルの体積 (m³)
   };
 }
 
@@ -1101,7 +1127,6 @@ renderer.setAnimationLoop((tms, frame) => {
       controls.update();
     }
     post.update();
-    field.conserve(); // 体積を一定に保つ
     remeshDirty();
   } catch (err) {
     const msg = `${err.name}: ${err.message}`;
