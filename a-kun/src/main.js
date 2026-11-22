@@ -3,9 +3,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ClayField } from './sdf.js?v=0.6.0';
-import { ButtonPanel } from './panel.js?v=0.6.0';
-import { initPost } from './post/ui.js?v=0.6.0';
+import { ClayField } from './sdf.js?v=0.6.1';
+import { ButtonPanel } from './panel.js?v=0.6.1';
+import { initPost } from './post/ui.js?v=0.6.1';
 
 // ================= 設定 =================
 const CLAY_HOME = new THREE.Vector3(0, 1.1, -0.45);
@@ -516,7 +516,15 @@ function updateTouchLimit(hs, dt, active) {
 }
 
 // 手のモデルの見た目: 見えている手はずらした位置に、ゴーストは本物の位置に
-const handMat = new THREE.MeshStandardMaterial({ color: 0xe3c4b3, roughness: 0.55, transparent: true });
+// 手は常に半透明の色付きで見せる。粘土をグッと押したときだけ不透明 (透明度 0) にして、表面で止まった手をはっきり見せる
+const HAND = {
+  idleColor: new THREE.Color(0x7fd0ff), // ふだんの色
+  pressColor: new THREE.Color(0xe3c4b3), // 押しているときの色 (肌色)
+  idleOpacity: 0.35,
+  pressFrom: 0.004, // 見えている手がこれ以上ずれたら (m)、不透明に向かう
+  pressTo: 0.011,   // ここまでずれたら完全に不透明
+};
+const handMat = new THREE.MeshStandardMaterial({ color: 0x7fd0ff, roughness: 0.55, transparent: true, opacity: 0.35 });
 const ghostMat = new THREE.MeshBasicMaterial({ color: 0x9fd3ff, transparent: true, opacity: 0, depthTest: false, depthWrite: false });
 function updateHandVisuals(hs) {
   if (!hs.styled) {
@@ -532,12 +540,15 @@ function updateHandVisuals(hs) {
   const off = hs.offset.length();
   hs.model.position.copy(hs.offset);
   const ar = xrMode === 'immersive-ar';
-  // パススルーでは本物の手が見えているので、ずれた時だけ見えている手を出す
-  const handOpacity = ar ? THREE.MathUtils.smoothstep(off, 0.003, 0.01) : 1;
-  hs.model.visible = handOpacity > 0.01;
+  // 押し込み具合 0〜1: 0 = ふだん (半透明の色付き) / 1 = グッと押している (不透明)
+  const press = THREE.MathUtils.smoothstep(off, HAND.pressFrom, HAND.pressTo);
+  const handOpacity = THREE.MathUtils.lerp(HAND.idleOpacity, 1, press);
+  hs.model.visible = true;
   hs.ghost.visible = !ar && off > 0.004;
   if (hs.styled) {
-    hs.model.getObjectByProperty('type', 'SkinnedMesh').material.opacity = handOpacity;
+    const hm = hs.model.getObjectByProperty('type', 'SkinnedMesh').material;
+    hm.opacity = handOpacity;
+    hm.color.lerpColors(HAND.idleColor, HAND.pressColor, press);
     hs.ghost.getObjectByProperty('type', 'SkinnedMesh').material.opacity = THREE.MathUtils.smoothstep(off, 0.004, 0.02) * 0.3;
   }
 }
@@ -776,13 +787,15 @@ workspace.add(propPanel.group);
 function recenter() {
   recenterFrom(camera.position, camera.quaternion);
 }
+const RECENTER = { forward: 0.45, drop: 0.5 }; // m。粘土の中心の位置 (目から前へ・下へ)
 function recenterFrom(headPos, headQuat) {
   const head = new THREE.Vector3().copy(headPos);
   const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(headQuat);
   fwd.y = 0;
   if (fwd.lengthSq() < 1e-4) fwd.set(0, 0, -1);
   fwd.normalize();
-  workspace.position.copy(head).addScaledVector(fwd, 0.42).add(new THREE.Vector3(0, -0.32, 0));
+  // 頭 (目) の高さが基準: 水平の視線方向に FORWARD、目から DROP だけ下に置く
+  workspace.position.copy(head).addScaledVector(fwd, RECENTER.forward).add(new THREE.Vector3(0, -RECENTER.drop, 0));
   workspace.rotation.set(0, Math.atan2(-fwd.x, -fwd.z), 0);
   workspace.updateMatrixWorld();
   clay.position.copy(workspace.position);
@@ -798,7 +811,7 @@ let recenterPending = false;
 let xrStartT = 0;
 
 // ---- 状態表示 (画面の UI と、XR 中は目の前の文字板) ----
-const VERSION = '0.6.0';
+const VERSION = '0.6.1';
 const logLines = [];
 function log(msg) {
   const line = `${new Date().toLocaleTimeString()} ${msg}`;
