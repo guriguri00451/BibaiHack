@@ -1,0 +1,35 @@
+# 生成物。直接編集せず deploy/envs.txt を直して ./deploy/render.sh を実行する
+# Cloudflare Tunnel "bibai-game"（DNS: bibai.t0waxx.com → このトンネル）
+# credentials.json は秘密情報なのでリポジトリに入れない（VM の /opt/bibai/cloudflared にだけ置く）
+tunnel: 90911730-55e1-4078-af70-593b387bbb8c
+credentials-file: /etc/cloudflared/credentials.json
+# この回線では QUIC だと4本中1本しか繋がらない（CRYPTO_ERROR 0x178）ので HTTP/2 にする
+protocol: http2
+ingress:
+  - hostname: bibai.t0waxx.com
+    path: ^/stg(/|$)
+    service: http://server-stg:8080
+  - hostname: bibai.t0waxx.com
+    path: ^/dev(/|$)
+    service: http://server-dev:8080
+  - hostname: bibai.t0waxx.com
+    path: ^/a-kun-01(/|$)
+    service: http://server-a-kun-01:8080
+  - hostname: bibai.t0waxx.com
+    path: ^/a-kun-02(/|$)
+    service: http://server-a-kun-02:8080
+  - hostname: bibai.t0waxx.com
+    path: ^/a-kun-03(/|$)
+    service: http://server-a-kun-03:8080
+  - hostname: bibai.t0waxx.com
+    path: ^/so-ma-01(/|$)
+    service: http://server-so-ma-01:8080
+  - hostname: bibai.t0waxx.com
+    path: ^/so-ma-02(/|$)
+    service: http://server-so-ma-02:8080
+  - hostname: bibai.t0waxx.com
+    path: ^/so-ma-03(/|$)
+    service: http://server-so-ma-03:8080
+  - hostname: bibai.t0waxx.com
+    service: http://server-prod:8080
+  - service: http_status:404
