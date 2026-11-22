@@ -1,0 +1,10 @@
+# Cloudflare Tunnel "bibai-game"（DNS: bibai.t0waxx.com → このトンネル）
+# credentials.json は秘密情報なのでリポジトリに入れない（VM の /opt/bibai/cloudflared にだけ置く）
+tunnel: 90911730-55e1-4078-af70-593b387bbb8c
+credentials-file: /etc/cloudflared/credentials.json
+# この回線では QUIC だと4本中1本しか繋がらない（CRYPTO_ERROR 0x178）ので HTTP/2 にする
+protocol: http2
+ingress:
+  - hostname: bibai.t0waxx.com
+    service: http://server:8080
+  - service: http_status:404
