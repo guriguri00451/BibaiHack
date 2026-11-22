@@ -10,6 +10,10 @@ export class ButtonPanel {
     this.buttons = [];
     const _v = new THREE.Vector3();
     this._v = _v;
+    this._o = new THREE.Vector3();
+    this._d = new THREE.Vector3();
+    this._inv = new THREE.Matrix4();
+    this.hover = new Set(); // レイが指しているボタンの id (毎フレーム main.js が入れ直す)
 
     // 背景の板
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -24,6 +28,7 @@ export class ButtonPanel {
       new THREE.PlaneGeometry(plateW, plateH),
       new THREE.MeshBasicMaterial({ color: 0x14171c, transparent: true, opacity: 0.82 }),
     );
+    this.bounds = { minX: minX - pad, maxX: maxX + pad, minY: minY - pad, maxY: maxY + pad + titleH };
     plate.position.set((minX + maxX) / 2, (minY + maxY) / 2 + titleH / 2, -0.003);
     this.group.add(plate);
 
@@ -50,14 +55,15 @@ export class ButtonPanel {
     this.refresh();
   }
 
-  _drawSlider(b, label, v) {
+  _drawSlider(b, label, v, hover = false) {
     const ctx = b.canvas.getContext('2d');
     const W = b.canvas.width, H = b.canvas.height;
     ctx.clearRect(0, 0, W, H);
     ctx.beginPath();
     ctx.roundRect(4, 4, W - 8, H - 8, 18);
-    ctx.fillStyle = '#2c313b';
+    ctx.fillStyle = hover ? '#3b4250' : '#2c313b';
     ctx.fill();
+    if (hover) { ctx.lineWidth = 6; ctx.strokeStyle = '#ffffff'; ctx.stroke(); }
     const fs = Math.round(H * 0.3);
     ctx.font = `bold ${fs}px system-ui, sans-serif`;
     ctx.textBaseline = 'middle';
@@ -81,7 +87,7 @@ export class ButtonPanel {
     b.tex.needsUpdate = true;
   }
 
-  _draw(b, active, flash, label, enabled = true) {
+  _draw(b, active, flash, label, enabled = true, hover = false) {
     const ctx = b.canvas.getContext('2d');
     const W = b.canvas.width, H = b.canvas.height;
     ctx.clearRect(0, 0, W, H);
@@ -91,14 +97,14 @@ export class ButtonPanel {
     if (b.swatch) {
       ctx.fillStyle = b.color;
       ctx.fill();
-      ctx.lineWidth = active ? 14 : 4;
-      ctx.strokeStyle = active ? '#ffffff' : '#4a5160';
+      ctx.lineWidth = active || hover ? 14 : 4;
+      ctx.strokeStyle = active || hover ? '#ffffff' : '#4a5160';
       ctx.stroke();
     } else {
-      ctx.fillStyle = flash ? '#ffffff' : active ? (b.color || '#4fc3f7') : '#2c313b';
+      ctx.fillStyle = flash ? '#ffffff' : active ? (b.color || '#4fc3f7') : hover && enabled ? '#3b4250' : '#2c313b';
       ctx.fill();
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = active ? '#ffffff' : '#4a5160';
+      ctx.lineWidth = hover && enabled ? 8 : 4;
+      ctx.strokeStyle = active || (hover && enabled) ? '#ffffff' : '#4a5160';
       ctx.stroke();
     }
     if (label) {
@@ -124,20 +130,77 @@ export class ButtonPanel {
       if (b.type === 'slider') {
         const v = b.get();
         const label = typeof b.label === 'function' ? b.label() : b.label;
-        const key = `${label}|${b.format ? b.format(v) : v.toFixed(3)}`;
-        if (key !== b.key) { b.key = key; this._drawSlider(b, label, v); }
+        const hover = this.hover.has(b.id);
+        const key = `${label}|${b.format ? b.format(v) : v.toFixed(3)}|${hover}`;
+        if (key !== b.key) { b.key = key; this._drawSlider(b, label, v, hover); }
         continue;
       }
       const active = b.isActive ? b.isActive() : false;
       const enabled = b.isEnabled ? b.isEnabled() : true;
       const flash = now - b.pressedAt < 180;
       const label = typeof b.label === 'function' ? b.label() : b.label;
-      const key = `${active}|${flash}|${label}|${enabled}`;
+      const hover = this.hover.has(b.id);
+      const key = `${active}|${flash}|${label}|${enabled}|${hover}`;
       if (key !== b.key) {
         b.key = key;
-        this._draw(b, active, flash, label, enabled);
+        this._draw(b, active, flash, label, enabled, hover);
       }
     }
+  }
+
+  // ---------- レイ (OS のカーソルと同じ: 指して、つまんでクリック) ----------
+
+  // レイを板の座標に直して、板の面との交点を返す。板の正面から当たらなければ null
+  _rayLocal(origin, dir) {
+    this.group.updateWorldMatrix(true, false);
+    const inv = this._inv.copy(this.group.matrixWorld).invert();
+    const o = this._o.copy(origin).applyMatrix4(inv);
+    const d = this._d.copy(dir).transformDirection(inv);
+    if (o.z <= 0 || d.z >= -1e-4) return null;
+    const t = -o.z / d.z;
+    if (t < 0.03 || t > 4) return null;
+    return { x: o.x + d.x * t, y: o.y + d.y * t, t };
+  }
+
+  // 板にレイが当たっていれば { panel, button (なければ null), point (ワールド), t }
+  rayHit(origin, dir) {
+    if (!this.group.visible) return null;
+    const l = this._rayLocal(origin, dir);
+    if (!l) return null;
+    const bd = this.bounds;
+    if (l.x < bd.minX || l.x > bd.maxX || l.y < bd.minY || l.y > bd.maxY) return null;
+    let button = null, best = Infinity;
+    for (const b of this.buttons) {
+      if (!b.onPress && b.type !== 'slider') continue;
+      if (b.isEnabled && !b.isEnabled()) continue;
+      // ボタンの間のすきまでも、いちばん近いボタンを指す (ボタンの外 1cm まで)
+      const dx = Math.max(0, Math.abs(l.x - b.x) - b.w / 2), dy = Math.max(0, Math.abs(l.y - b.y) - b.h / 2);
+      const dist = Math.hypot(dx, dy);
+      if (dist < 0.01 && dist < best) { best = dist; button = b; }
+    }
+    const point = this.group.localToWorld(new THREE.Vector3(l.x, l.y, 0));
+    return { panel: this, button, point, t: l.t };
+  }
+
+  // つまみ始め (クリック)。スライダーは値を決め、ボタンは押す
+  rayDown(hit) {
+    const b = hit.button;
+    if (!b) return;
+    if (b.type === 'slider') { this._sliderTo(b, this.group.worldToLocal(this._v.copy(hit.point)).x); return; }
+    b.pressedAt = performance.now();
+    b.onPress();
+  }
+
+  // つまんだまま動かす: スライダーは、レイが板からはずれても左右の位置で値を決め続ける
+  rayDrag(b, origin, dir) {
+    if (!b || b.type !== 'slider') return;
+    const l = this._rayLocal(origin, dir);
+    if (l) this._sliderTo(b, l.x);
+  }
+
+  _sliderTo(b, x) {
+    const t = Math.min(1, Math.max(0, (x - (b.x - b.w / 2)) / b.w * 1.1 - 0.05));
+    b.set(b.min + t * (b.max - b.min));
   }
 
   // 指先が押していれば true (そのフレームは道具を使わない)

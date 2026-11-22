@@ -3,9 +3,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ClayField } from './sdf.js?v=0.6.4';
-import { ButtonPanel } from './panel.js?v=0.6.4';
-import { initPost } from './post/ui.js?v=0.6.4';
+import { ClayField } from './sdf.js?v=0.6.5';
+import { ButtonPanel } from './panel.js?v=0.6.5';
+import { initPost } from './post/ui.js?v=0.6.5';
 
 // ================= 設定 =================
 const CLAY_HOME = new THREE.Vector3(0, 1.1, -0.45);
@@ -391,11 +391,16 @@ const hands = [0, 1].map((i) => {
     valid: new Set(), prevValid: new Set(),
     contact: false, lastContactT: 0,
     cursor: makeCursor(),
+    ctrl: renderer.xr.getController(i), // 手から伸びるレイ (OS のカーソルと同じもの)
+    rayMode: null, uiPinch: null, uiHit: null,
   };
+  scene.add(hs.ctrl);
+  hs.ctrl.addEventListener('connected', (e) => { hs.rayMode = e.data?.targetRayMode || null; log(`レイ(${hs.handedness || i}): ${hs.rayMode}`); });
   hand.addEventListener('connected', (e) => { hs.connected = true; hs.handedness = e.data.handedness; });
   hand.addEventListener('disconnected', () => {
     hs.connected = false; endPinch(hs); hs.touching = false; hs.contact = false;
     hs.cursor.visible = false; hs.prevValid.clear(); hs.offset.set(0, 0, 0); hs.excess = 0; hs.s = 0;
+    hs.uiPinch = null; hs.uiHit = null;
   });
   return hs;
 });
@@ -614,14 +619,66 @@ function handSculpt(hs, dt, t) {
 
 const _tipRaw = new THREE.Vector3(), _thumbRaw = new THREE.Vector3(), _mid = new THREE.Vector3();
 
+// ---- レイで指す (OS と同じ: 手のレイにカーソルが出て、つまむとクリック) ----
+const uiPanels = () => [panel, propPanel, ...post.panels];
+const _ro = new THREE.Vector3(), _rd = new THREE.Vector3(), _rq = new THREE.Quaternion();
+function handRay(hs) {
+  const c = hs.ctrl;
+  if (!c || !c.visible) return null;
+  c.updateWorldMatrix(true, false);
+  c.getWorldPosition(_ro);
+  c.getWorldQuaternion(_rq);
+  _rd.set(0, 0, -1).applyQuaternion(_rq);
+  return { origin: _ro, dir: _rd };
+}
+// カーソル (板の上の輪) とレイの線
+function makeUiPointer() {
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.007, 0.011, 32),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, depthTest: false, depthWrite: false, side: THREE.DoubleSide }),
+  );
+  const dot = new THREE.Mesh(
+    new THREE.CircleGeometry(0.0028, 16),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, depthWrite: false }),
+  );
+  ring.add(dot);
+  ring.renderOrder = 60; dot.renderOrder = 61;
+  ring.visible = false;
+  const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, depthTest: false }));
+  line.frustumCulled = false; line.renderOrder = 59; line.visible = false;
+  scene.add(ring, line);
+  return { ring, line };
+}
+for (const hs of hands) hs.ptr = makeUiPointer();
+const _q2 = new THREE.Quaternion(), _nrm = new THREE.Vector3();
+function showUiPointer(hs, hit, origin, pressed) {
+  const { ring, line } = hs.ptr;
+  hit.panel.group.getWorldQuaternion(_q2);
+  _nrm.set(0, 0, 1).applyQuaternion(_q2);
+  ring.visible = line.visible = true;
+  ring.position.copy(hit.point).addScaledVector(_nrm, 0.004);
+  ring.quaternion.copy(_q2);
+  ring.scale.setScalar(pressed ? 0.7 : hit.button ? 1 : 1.4);
+  ring.material.color.set(pressed ? '#ffd54f' : '#ffffff');
+  const p = line.geometry.attributes.position;
+  p.setXYZ(0, origin.x, origin.y - 0.02, origin.z);
+  p.setXYZ(1, ring.position.x, ring.position.y, ring.position.z);
+  p.needsUpdate = true;
+}
+function hideUiPointer(hs) { hs.ptr.ring.visible = hs.ptr.line.visible = false; }
+
 function updateXR(dt, t) {
   clay.updateMatrixWorld();
   const movers = [];
+  for (const p of uiPanels()) p.hover.clear();
   for (const hs of hands) {
     const tipJ = hs.hand.joints['index-finger-tip'];
     const thumbJ = hs.hand.joints['thumb-tip'];
     if (!hs.connected || !tipJ || !thumbJ || !tipJ.visible || !thumbJ.visible) {
       hs.cursor.visible = false;
+      hideUiPointer(hs);
+      hs.uiPinch = null;
       endPinch(hs);
       hs.touching = false;
       hs.contact = false;
@@ -632,7 +689,22 @@ function updateXR(dt, t) {
       continue;
     }
     readJoints(hs, t);
-    updateTouchLimit(hs, dt, !hs.pinching && (state.mode === 'knead' || state.mode === 'smooth'));
+    // レイが板を指しているか (粘土のすぐそばにある手は、粘土を触る方を優先して指さない)
+    const ray = handRay(hs);
+    let hit = null;
+    if (ray && (!hs.pinching || hs.uiPinch)) {
+      const tipG = worldToGrid(hs.jreal.get('index-finger-tip'), _w);
+      const nearClay = !hs.uiPinch && field.sample(tipG) < worldLenToGrid(0.06);
+      if (!nearClay) {
+        for (const pn of uiPanels()) {
+          const h = pn.rayHit(ray.origin, ray.dir);
+          if (h && (!hit || h.t < hit.t)) hit = h;
+        }
+      }
+    }
+    if (hs.uiPinch && !hit) hit = hs.uiHit; // つまんでいる間は、レイが板をはずれても同じ板を操作し続ける
+    const pointing = !!hit;
+    updateTouchLimit(hs, dt, !pointing && !hs.pinching && (state.mode === 'knead' || state.mode === 'smooth'));
     tipJ.getWorldPosition(_tipRaw);
     thumbJ.getWorldPosition(_thumbRaw);
     hs.tip.copy(hs.tipF.filter(_tipRaw, t));
@@ -646,6 +718,24 @@ function updateXR(dt, t) {
       rememberJoints(hs);
       continue;
     }
+
+    // レイでクリック: 指して、つまむ。つまんでいる間はスライダーをなぞれる
+    if (pointing && !hs.pinching) {
+      if (hs.uiPinch) {
+        if (pinchDist > PINCH_OFF) hs.uiPinch = null;
+        else hs.uiPinch.panel.rayDrag(hs.uiPinch.button, ray.origin, ray.dir);
+      } else if (pinchDist < PINCH_ON) {
+        hit.panel.rayDown(hit);
+        hs.uiPinch = { panel: hit.panel, button: hit.button };
+      }
+      hs.uiHit = hit;
+      if (hit.button) hit.panel.hover.add(hit.button.id);
+      showUiPointer(hs, hit, ray.origin, !!hs.uiPinch);
+      rememberJoints(hs);
+      continue;
+    }
+    hs.uiPinch = null;
+    hideUiPointer(hs);
 
     // ピンチ (ヒステリシス付き)
     if (!hs.pinching && pinchDist < PINCH_ON) startPinch(hs);
@@ -774,7 +864,7 @@ workspace.add(propPanel.group);
 function recenter() {
   recenterFrom(camera.position, camera.quaternion);
 }
-const RECENTER = { forward: 0.45, drop: 0.4 }; // m。粘土の中心の位置 (目から前へ・下へ)
+const RECENTER = { forward: 0.45, drop: 0 }; // drop = 0: 粘土の中心が目と同じ高さ // m。粘土の中心の位置 (目から前へ・下へ)
 function recenterFrom(headPos, headQuat) {
   const head = new THREE.Vector3().copy(headPos);
   const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(headQuat);
@@ -798,7 +888,7 @@ let recenterPending = false;
 let xrStartT = 0;
 
 // ---- 状態表示 (画面の UI と、XR 中は目の前の文字板) ----
-const VERSION = '0.6.4';
+const VERSION = '0.6.5';
 const logLines = [];
 function log(msg) {
   const line = `${new Date().toLocaleTimeString()} ${msg}`;
@@ -876,7 +966,7 @@ async function startXR(mode) {
       log('XR を終了しました');
       xrMode = null;
       applyEnvironment();
-      for (const hs of hands) { endPinch(hs); hs.cursor.visible = false; }
+      for (const hs of hands) { endPinch(hs); hs.cursor.visible = false; hs.uiPinch = null; hideUiPointer(hs); }
       if (savedCam) {
         camera.position.copy(savedCam.pos);
         camera.quaternion.copy(savedCam.quat);

@@ -243,6 +243,7 @@ export function initPost(h) {
     xrPanelPress(tip, hs) { return xrPanel.group.visible && xrPanel.press(tip, hs); },
     onXRChange() { xrPanel.group.visible = !!h.xrMode(); },
     update() { if (xrPanel.group.visible) xrPanel.refresh(); },
+    get panels() { return [xrPanel]; },
     get target() { return target; },
     posted,
   };
