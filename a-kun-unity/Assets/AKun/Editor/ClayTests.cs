@@ -75,8 +75,36 @@ namespace AKun.EditorTools
             Check(f.d[f.N * f.N * 40 + f.N * 40 + 40] == snap.d[f.N * f.N * 40 + f.N * 40 + 40], "スナップショットから戻せる");
 
             foreach (var m in meshes) UnityEngine.Object.DestroyImmediate(m);
+
+            // 隠す場所: マップの模型をどう置いても、送る Transform はマップ座標 (右手系) で同じ
+            var mv = new MapView(null);
+            mv.SetPose(new Vector3(0.3f, 1.1f, 0.8f), Quaternion.Euler(0, 37, 0), 0.05f);
+            var rt = mv.root;
+            mv.SetSpot(new MapView.RayHit { point = rt.TransformPoint(new Vector3(1, 0, 2)), normal = rt.up }, rt.TransformDirection(new Vector3(0, -1, 1)));
+            var st = mv.SpotTransform();
+            Check(Near(st["position"], 1, 0, -2), $"隠す場所の位置はマップ座標 (z 反転) {MiniJson.Write(st["position"])}");
+            Check(NearQ(st["rotation"], 0, 0, 0, 1), $"奥を向けて置くと回転なし {MiniJson.Write(st["rotation"])}");
+            mv.SetPose(new Vector3(-2, 0, 5), Quaternion.Euler(10, -80, 5), 0.8f);
+            var st2 = mv.SpotTransform();
+            Check(Near(st2["position"], 1, 0, -2) && NearQ(st2["rotation"], 0, 0, 0, 1), "マップを動かしても隠す場所の Transform は変わらない");
+            mv.SetSpot(new MapView.RayHit { point = rt.TransformPoint(new Vector3(-1, 0.5f, 0)), normal = rt.up }, rt.TransformDirection(new Vector3(1, -1, 0)));
+            float h = Mathf.Sqrt(0.5f);
+            Check(NearQ(mv.SpotTransform()["rotation"], 0, -h, 0, h), $"+x を向けると右手系で y 軸まわり -90° {MiniJson.Write(mv.SpotTransform()["rotation"])}");
+            UnityEngine.Object.DestroyImmediate(mv.root.gameObject);
+
             Debug.Log($"[test] {(fails == 0 ? "ALL PASSED" : $"{fails} FAILED")}");
             if (Application.isBatchMode) EditorApplication.Exit(fails == 0 ? 0 : 1);
+        }
+
+        // クォータニオンは q と -q が同じ回転
+        static bool NearQ(object list, float x, float y, float z, float w) => Near(list, x, y, z, w) || Near(list, -x, -y, -z, -w);
+
+        static bool Near(object list, params float[] expect)
+        {
+            var l = (System.Collections.Generic.List<object>)list;
+            if (l.Count != expect.Length) return false;
+            for (int i = 0; i < l.Count; i++) if (Mathf.Abs(Convert.ToSingle(l[i]) - expect[i]) > 1e-4f) return false;
+            return true;
         }
 
         static List<Mesh> MeshAll(ClayField f, out Vector3[] P, out Vector3[] N, out int[] T)

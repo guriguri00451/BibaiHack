@@ -3,7 +3,7 @@
 [a-kun](../a-kun/) (WebXR 版) を Unity で作り直したものです。中身 (粘土の計算、手の触り方、パネル、投稿) は Web 版と同じで、Android XR (Galaxy XR など) のアプリとして動きます。
 
 - Unity **6000.3.22f1** (URP、OpenXR、Android XR)
-- パッケージ: Unity OpenXR: Android XR 1.5.1、XR Hands、AR Foundation (パススルー)、Input System
+- パッケージ: Unity OpenXR: Android XR 1.5.1、XR Hands、AR Foundation (パススルー)、Input System、glTFast 6.21.0 (マップの読み込み)
 - 仕様: [docs/whiteboard-brainstorm.md](../docs/whiteboard-brainstorm.md)
 
 ## ファイル
@@ -16,6 +16,8 @@
 | `Assets/AKun/Scripts/ButtonPanel.cs` | 空中のボタン・スライダー・色見本。指先で押す / レイで指してつまむ (`a-kun/src/panel.js` の移植) |
 | `Assets/AKun/Scripts/Post.cs` / `Uploader.cs` | 投稿のパネルと投稿先 (この端末内 / ゲームサーバー) (`a-kun/src/post/` の移植) |
 | `Assets/AKun/Scripts/Glb.cs` | GLB の書き出し |
+| `Assets/AKun/Scripts/MapView.cs` | 隠す場所を選ぶマップの模型。マップ定義と GLB の読み込み、レイの当たり判定、隠す場所の Transform (seeker-unity の `MapService` / `MapDefinition` / `MapPresenter` をもとにした) |
+| `Assets/StreamingAssets/mock/` | マップのモック (seeker-unity と同じ `bibai-museum`) |
 | `Assets/AKun/Resources/Shaders/` | 粘土 (頂点カラー)、半透明の手、パネルの角丸、文字 |
 | `Assets/AKun/Editor/ProjectSetup.cs` | プロジェクトの設定 (Player、URP、XR、シーン) と APK のビルド |
 | `Assets/AKun/Editor/ClayTests.cs` | 粘土の計算の確認 |
@@ -61,12 +63,27 @@ adb install -r a-kun-unity/Builds/a-kun-clay.apk
 - 右のパネル「粘土の性質」: 柔らかさなど (端末に保存される)
 - 粘土の上 (奥) のボタン: 投稿する / 更新 / 新しく作る。上の板に最近のログが出る
 
+### 隠す場所を選ぶ
+
+「投稿する」を押すと、粘土と道具のパネルがしまわれ、作業台の上にマップの模型 (最初は横幅 50cm) が出ます。
+
+- レイでマップを指してつまむ: そこに隠す。粘土がマップと同じ縮尺で置かれる (底面を面に付け、上を面の向きに、正面を自分の方に向ける)。つまんだまま動かすと付いてくる
+- 何もない所をつまむ: マップを動かす。両手でつまむと回す・大きさを変える (実物大まで)
+- 「ここに隠す」: GLB を上げて、隠す場所の Transform でオブジェクトを作る (2 回目からは更新)。「やめる」で粘土に戻る
+- 「マップを手元へ」: 頭の前に持ってきて、最初の大きさに戻す
+- 2 回目からは、前に隠した場所を選んだ状態で始まる
+- エディタで再生したときは、マウスでマップを押すとそこに隠す
+
+マップは起動時の設定の `map` (既定は `bibai-museum`) で選び、`Assets/StreamingAssets/mock/<map>.json` を読みます (サーバーのマップ API ができたら `MapView.Load` の `apiBase` に渡す)。
+マップの模型の置き方は `MapView.SetPose(位置, 回転, 倍率)` で外から決められます (マーカーの位置や、保存しておいた置き方など)。
+マップの材質は粘土と同じシェーダーで、glTF の基本色だけを出します (テクスチャはまだ出さない)。
+
 ## 投稿するもの
 
 Web 版と同じです ([a-kun/README.md](../a-kun/README.md#投稿するもの))。
 
 - GLB 1 ファイル (`POSITION` / `NORMAL` / `COLOR_0`、メートル、Y 上、原点は底面の中心)。体積が 0.0027 m³ になるように大きさをそろえる
-- Transform は `position` / `rotation` / `scale` ([1,1,1])。座標は WebXR と同じ右手系 (Unity の z を反転して送る)
+- Transform は `position` / `rotation` / `scale` ([1,1,1])。マップの上で選んだ隠す場所を、マップ座標 (右手系・Y 上・メートル、仕様 3.2) で送る。マップの模型をどう動かしても同じ値になる
 - 投稿した GLB は端末にも保存される: `/sdcard/Android/data/com.bibaihack.akunclay/files/posts/clay-<n>-v<版>.glb`
 
 ```bash
