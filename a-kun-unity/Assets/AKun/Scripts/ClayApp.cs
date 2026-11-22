@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
 using Unity.XR.CoreUtils;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -75,6 +76,11 @@ namespace AKun
         const float POST_VOLUME = 0.0027f;
         const float POST_FACTOR_MIN = 0.2f, POST_FACTOR_MAX = 5f;
 
+        // 隠す場所を選ぶマップの模型: 最初は横幅 (長い方) をこの長さ (m) にして作業台に置く。手で動かせる大きさの範囲 (倍率)
+        const float MAP_WIDTH = 0.5f;
+        const float MAP_SCALE_MIN = 0.002f, MAP_SCALE_MAX = 1f; // 1 = 実物大
+        string mapId = "bibai-museum";
+
         // ================= シーン =================
         public ClayField field;
         Transform rig, workspace, clay;
@@ -83,6 +89,9 @@ namespace AKun
         readonly Dictionary<int, (Mesh mesh, MeshRenderer renderer)> chunks = new Dictionary<int, (Mesh, MeshRenderer)>();
         ButtonPanel panel, propPanel;
         Post post;
+        public MapView map;
+        Task mapLoading;
+        bool hiding, mapPlaced; // hiding: 投稿の前に、マップの上で隠す場所を選んでいる間
         readonly List<ButtonPanel> uiPanels = new List<ButtonPanel>();
         bool xrActive;
         bool recenterPending = true;
@@ -121,8 +130,9 @@ namespace AKun
             BuildHands();
             BuildPanels();
             BuildHud();
+            map = new MapView(clayMat);
             post = new Post(this, workspace, PANEL_Z);
-            uiPanels.Add(panel); uiPanels.Add(propPanel); uiPanels.Add(post.Panel);
+            uiPanels.Add(panel); uiPanels.Add(propPanel); uiPanels.Add(post.Panel); uiPanels.Add(post.HidePanel);
             LoadParams();
             Log($"起動しました (文字: {Gfx.FontName})");
             RequestPermissions();
@@ -490,13 +500,13 @@ namespace AKun
         // サーバーの設定: Intent の extra (server / room / name) か、persistentDataPath/config.json
         void ApplyConfig()
         {
-            string server = null, room = null, name = null;
+            string server = null, room = null, name = null, mapArg = null;
             try
             {
                 string path = Path.Combine(Application.persistentDataPath, "config.json");
                 if (File.Exists(path) && MiniJson.Parse(File.ReadAllText(path)) is Dictionary<string, object> cfg)
                 {
-                    server = cfg.Str("server"); room = cfg.Str("room"); name = cfg.Str("name");
+                    server = cfg.Str("server"); room = cfg.Str("room"); name = cfg.Str("name"); mapArg = cfg.Str("map");
                 }
             }
             catch (Exception e) { Log($"config.json を読めません: {e.Message}"); }
@@ -509,9 +519,11 @@ namespace AKun
                 server = intent.Call<string>("getStringExtra", "server") ?? server;
                 room = intent.Call<string>("getStringExtra", "room") ?? room;
                 name = intent.Call<string>("getStringExtra", "name") ?? name;
+                mapArg = intent.Call<string>("getStringExtra", "map") ?? mapArg;
             }
             catch (Exception e) { Debug.Log($"[clay] intent を読めません: {e.Message}"); }
 #endif
+            if (!string.IsNullOrEmpty(mapArg)) mapId = mapArg;
             if (!string.IsNullOrEmpty(server))
             {
                 Log($"サーバーに接続します: {server} 部屋 {room}");
@@ -595,6 +607,83 @@ namespace AKun
             manipDirty = true;
         }
 
+        // ================= 隠す場所を選ぶ =================
+        // 「投稿する」のあと: 粘土と道具のパネルをしまって、マップの模型を出す。
+        // spot: 前に隠した場所 (マップの root から見た位置)。あれば最初から選んでおく
+        public async Task BeginHide(Mesh shape, (Vector3 pos, Quaternion rot)? spot)
+        {
+            if (!map.IsLoaded)
+            {
+                if (mapLoading == null) { Log($"マップを読み込みます: {mapId}"); mapLoading = map.Load(mapId); }
+                try { await mapLoading; }
+                catch (Exception) { mapLoading = null; throw; } // 次の「投稿する」でもう一度読む
+                Log($"マップを読み込みました: {map.Name}");
+            }
+            if (!mapPlaced) { PlaceMapOnTable(); mapPlaced = true; }
+            if (spot != null) map.SetSpotLocal(spot.Value.pos, spot.Value.rot);
+            else map.ClearSpot();
+            map.SetSpotMesh(shape);
+            SetHiding(true);
+        }
+
+        public void EndHide() => SetHiding(false);
+
+        void SetHiding(bool on)
+        {
+            hiding = on;
+            map.Visible = on;
+            clay.gameObject.SetActive(!on);
+            panel.Visible = !on;
+            propPanel.Visible = !on;
+            foreach (var hs in hands)
+            {
+                EndPinch(hs);
+                hs.uiPinch = false;
+                hs.ResetTouch();
+            }
+            manipDirty = true;
+        }
+
+        // マップを作業台の上に模型として置く (粘土の台座の上)
+        void PlaceMapOnTable() => map.FitOnTable(workspace.position + Vector3.down * CUBE_HALF, workspace.rotation, MAP_WIDTH);
+
+        // 「マップを手元へ」: 作業台ごと頭の前に持ってきて、マップを最初の大きさで置き直す
+        public void RecenterMap()
+        {
+            if (xrActive) Recenter();
+            PlaceMapOnTable();
+        }
+
+        // 隠す場所を選んでいる間の手: レイがマップに当たっていればそこを指し、つまむとそこに隠す (つまんだまま動かすと付いてくる)。
+        // 何もない所をつまむとマップを動かす (両手で回転・拡大縮小)
+        void UpdateHideHand(int hi, HandState hs, bool hasRay, Vector3 o, Vector3 d, float pinchDist)
+        {
+            MapView.RayHit hit = default;
+            bool onMap = hasRay && map.Raycast(o, d, out hit);
+            if (!hs.pinching && pinchDist < PINCH_ON)
+            {
+                hs.pinching = true;
+                manipDirty = true;
+                hs.pinchMode = onMap ? "spot" : "move";
+            }
+            else if (hs.pinching && pinchDist > PINCH_OFF)
+            {
+                EndPinch(hs);
+            }
+            if (hs.pinching && hs.pinchMode == "move") { movers.Add(hs); return; }
+            if (!onMap) return;
+            if (hs.pinching && hs.pinchMode == "spot") map.SetSpot(hit, d);
+            // レイの線と、当たった所の点
+            var line = pointers[hi].line;
+            line.enabled = true;
+            line.SetPosition(0, o + Vector3.down * 0.02f);
+            line.SetPosition(1, hit.point);
+            brushMat[hi].SetColor("_BaseColor", hs.pinching ? new Color(1, 0.84f, 0.31f, 0.9f) : new Color(1, 1, 1, 0.7f));
+            brushCursor[hi].position = hit.point;
+            brushCursor[hi].localScale = Vector3.one * 0.01f;
+            brushCursor[hi].gameObject.SetActive(true);
+        }
+
         // ================= 投稿用の書き出し =================
         public struct ExportResult
         {
@@ -603,6 +692,7 @@ namespace AKun
             public Quaternion rotation; // 粘土の向き (ワールド)
             public float factor;        // 大きさの補正の倍率
             public float volume;        // 投稿するモデルの体積 (m³)
+            public Mesh mesh;           // 投稿する形 (Unity の座標、底面の中心が原点)。隠す場所の見本に使う
         }
 
         // 粘土を 1 つのメッシュ (頂点カラー付き) の GLB にする。
@@ -631,9 +721,15 @@ namespace AKun
             float raw = Glb.Volume(P, T);
             float factor = raw > 1e-9f ? Mathf.Clamp(Mathf.Pow(POST_VOLUME / raw, 1f / 3f), POST_FACTOR_MIN, POST_FACTOR_MAX) : 1;
             for (int i = 0; i < P.Length; i++) P[i] *= factor;
+            var N = nor.ToArray(); var C = col.ToArray();
+            var mesh = new Mesh { name = "post-preview" };
+            if (P.Length > 65535) mesh.indexFormat = IndexFormat.UInt32;
+            mesh.vertices = P; mesh.normals = N; mesh.colors = C; mesh.triangles = T;
+            mesh.RecalculateBounds();
             return new ExportResult
             {
-                bytes = Glb.Write(P, nor.ToArray(), col.ToArray(), T),
+                bytes = Glb.Write(P, N, C, T),
+                mesh = mesh,
                 anchor = clay.TransformPoint(anchorLocal),
                 rotation = clay.rotation,
                 factor = factor,
@@ -696,7 +792,7 @@ namespace AKun
         // XR が無いとき (エディタ): マウスでパネルを押せるだけ
         void UpdateDesktop()
         {
-            cam.transform.LookAt(clay.position + Vector3.up * 0.05f);
+            cam.transform.LookAt(hiding ? map.root.TransformPoint(map.LocalBounds.center) : clay.position + Vector3.up * 0.05f);
             foreach (var p in uiPanels) p.hover.Clear();
             var mouse = Mouse.current;
             if (mouse == null) return;
@@ -711,6 +807,10 @@ namespace AKun
             {
                 hit.panel.hover.Add(hit.button.def.id);
                 if (mouse.leftButton.wasPressedThisFrame) hit.panel.RayDown(hit);
+            }
+            else if (hit == null && hiding && mouse.leftButton.isPressed && map.Raycast(ray.origin, ray.direction, out var mh, 20f))
+            {
+                map.SetSpot(mh, ray.direction); // マウスで押した (押したまま動かした) 所に隠す
             }
         }
 
@@ -943,40 +1043,42 @@ namespace AKun
             manipDirty = true;
         }
 
-        // 何もない所をつまむ: 片手で移動、両手で回転・拡大縮小
+        // 何もない所をつまむ: 片手で移動、両手で回転・拡大縮小 (隠す場所を選んでいる間はマップを動かす)
         void UpdateObjectManip(List<HandState> movers)
         {
+            var target = hiding ? map.root : clay;
+            float minScale = hiding ? MAP_SCALE_MIN : CUBE_SCALE * 0.25f, maxScale = hiding ? MAP_SCALE_MAX : CUBE_SCALE * 4;
             if (manipDirty || manipCount != movers.Count)
             {
                 manipDirty = false;
                 manipCount = movers.Count;
                 if (movers.Count == 1)
                 {
-                    manipOffset = clay.position - movers[0].pinchPos;
+                    manipOffset = target.position - movers[0].pinchPos;
                 }
                 else if (movers.Count >= 2)
                 {
                     manipV0 = movers[1].pinchPos - movers[0].pinchPos;
                     manipMid0 = (movers[0].pinchPos + movers[1].pinchPos) * 0.5f;
-                    manipPos0 = clay.position;
-                    manipQuat0 = clay.rotation;
-                    manipScale0 = clay.localScale.x;
+                    manipPos0 = target.position;
+                    manipQuat0 = target.rotation;
+                    manipScale0 = target.localScale.x;
                 }
             }
             if (movers.Count == 1)
             {
-                clay.position = movers[0].pinchPos + manipOffset;
+                target.position = movers[0].pinchPos + manipOffset;
             }
             else if (movers.Count >= 2 && manipV0.magnitude > 0.01f)
             {
                 var v = movers[1].pinchPos - movers[0].pinchPos;
                 var mid = (movers[0].pinchPos + movers[1].pinchPos) * 0.5f;
-                float newScale = Mathf.Clamp(manipScale0 * v.magnitude / manipV0.magnitude, CUBE_SCALE * 0.25f, CUBE_SCALE * 4);
+                float newScale = Mathf.Clamp(manipScale0 * v.magnitude / manipV0.magnitude, minScale, maxScale);
                 float s = newScale / manipScale0;
                 var q = Quaternion.FromToRotation(manipV0.normalized, v.normalized);
-                clay.rotation = q * manipQuat0;
-                clay.localScale = Vector3.one * newScale;
-                clay.position = mid + q * (manipPos0 - manipMid0) * s;
+                target.rotation = q * manipQuat0;
+                target.localScale = Vector3.one * newScale;
+                target.position = mid + q * (manipPos0 - manipMid0) * s;
             }
         }
 
@@ -1067,7 +1169,7 @@ namespace AKun
                 ButtonPanel.Hit hit = null;
                 if (hasRay && (!hs.pinching || hs.uiPinch))
                 {
-                    bool nearClay = !hs.uiPinch && hs.valid.Contains(XRHandJointID.IndexTip)
+                    bool nearClay = !hiding && !hs.uiPinch && hs.valid.Contains(XRHandJointID.IndexTip)
                         && field.Sample(WorldToGrid(hs.jreal[XRHandJointID.IndexTip])) < WorldLenToGrid(0.06f);
                     if (!nearClay)
                         foreach (var pn in uiPanels)
@@ -1078,7 +1180,7 @@ namespace AKun
                 }
                 if (hs.uiPinch && hit == null) hit = hs.uiHit; // つまんでいる間は、レイが板をはずれても同じ板を操作し続ける
                 bool pointing = hit != null;
-                UpdateTouchLimit(hs, dt, !pointing && !hs.pinching && mode == "touch");
+                UpdateTouchLimit(hs, dt, !hiding && !pointing && !hs.pinching && mode == "touch");
                 hs.tip = hs.tipF.Filter(hs.tipRaw, t);
                 hs.pinchPos = hs.pinchF.Filter((hs.tipRaw + hs.thumbRaw) * 0.5f, t);
                 float pinchDist = Vector3.Distance(hs.tipRaw, hs.thumbRaw);
@@ -1121,6 +1223,13 @@ namespace AKun
                 }
                 hs.uiPinch = false;
                 HideUiPointer(hi);
+
+                if (hiding)
+                {
+                    UpdateHideHand(hi, hs, hasRay, rayO, rayD, pinchDist);
+                    RememberJoints(hs);
+                    continue;
+                }
 
                 // ピンチ (ヒステリシス付き)
                 if (!hs.pinching && pinchDist < PINCH_ON) StartPinch(hs);
