@@ -3,25 +3,33 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ClayField } from './sdf.js?v=0.6.5';
-import { ButtonPanel } from './panel.js?v=0.6.5';
-import { initPost } from './post/ui.js?v=0.6.5';
+import { ClayField } from './sdf.js?v=0.6.6';
+import { ButtonPanel } from './panel.js?v=0.6.6';
+import { initPost } from './post/ui.js?v=0.6.6';
 
 // ================= 設定 =================
 const CLAY_HOME = new THREE.Vector3(0, 1.1, -0.45);
+// さわる: XR では手の押し込みの深さで、軽く触れる=なでる / 深く押す=こねる に自動で切り替わる。
+//   画面では、ドラッグ=こねる / Shift+ドラッグ=なでる
 const MODES = {
-  knead: { label: 'こねる', color: '#4fc3f7' },
-  add: { label: '盛る', color: '#81c784' },
-  smooth: { label: 'なでる', color: '#ffd54f' },
-  pull: { label: 'つまむ', color: '#ff8a65' }, // デスクトップ用 (XR ではピンチが常に「つまむ」)
+  touch: { label: 'さわる', color: '#4fc3f7' },
+  pull: { label: 'つまむ', color: '#ff8a65' }, // 画面用 (XR ではピンチが常に「つまむ」)
   paint: { label: '塗る', color: '#f48fb1' },
+  // 画面の「さわる」の中身 (ボタンには出さない)
+  knead: { label: 'こねる', color: '#4fc3f7', hidden: true },
+  smooth: { label: 'なでる', color: '#ffd54f', hidden: true },
 };
-// 塗る・盛るときの色 (sRGB)
+// 押し込みの深さ (本物の手が粘土の表面からめり込んだ深さ, m) と、なでる→こねるの切り替え
+const TOUCH = {
+  kneadFrom: 0.004, // これより浅いと、こねずになでるだけ
+  kneadSpan: 0.010, // ここから kneadFrom + kneadSpan まで、なでる→こねるへなめらかに切り替わる
+};
+// 塗るときの色 (sRGB)
 const PALETTE = [
   '#c98060', '#8d5a3b', '#f2e6d0', '#ffffff', '#3b3b3b', '#d84a3a',
   '#f29a38', '#f2d14a', '#6bbf59', '#3f8fd2', '#7a5cc7', '#ef8fb5',
 ];
-const state = { mode: 'knead', brushR: 0.015, color: PALETTE[0] };
+const state = { mode: 'touch', brushR: 0.015, color: PALETTE[0] };
 let _rgbKey = '', _rgb = [0, 0, 0];
 function colorRGB() {
   if (_rgbKey !== state.color) {
@@ -136,7 +144,6 @@ function applyTool(mode, worldPos, strength = 0.5, dir = null) {
     const g2 = worldToGrid(new THREE.Vector3().copy(worldPos).addScaledVector(dir, state.brushR * 0.3));
     return field.pull(g, g2.sub(g), r * 1.6);
   }
-  if (mode === 'add') return field.add(g, r, colorRGB());
   if (mode === 'paint') return field.paint(g, r, colorRGB(), strength);
   if (mode === 'smooth') return field.smooth(g, r * 1.4, strength);
   return false;
@@ -259,7 +266,7 @@ el.addEventListener('pointerdown', (e) => {
   const offset = ray.direction.clone().multiplyScalar(grabR() * 0.25); // つまむ: 表面の少し内側をつかむ
   stroke = {
     id: e.pointerId,
-    mode: state.mode,
+    mode: state.mode === 'touch' ? (e.shiftKey ? 'smooth' : 'knead') : state.mode,
     base: undoStack[undoStack.length - 1],
     offset,
     lastG: worldToGrid(p.clone().add(offset)),
@@ -500,6 +507,7 @@ function updateTouchLimit(hs, dt, active) {
     }
   }
   let sTarget = 0;
+  let depthNow = 0;
   if (best > -Infinity) {
     const proxyDepth = best * field.h * clay.scale.x; // m
     if (proxyDepth > -0.005) {
@@ -508,10 +516,13 @@ function updateTouchLimit(hs, dt, active) {
       if (hs.s <= 1e-4) hs.n.copy(_ln); else hs.n.lerp(_ln, 0.15).normalize();
     }
     const D = Math.max(0, proxyDepth + hs.s); // 本物の手のめり込み
+    depthNow = D;
     // 見せるめり込み = L(1 - e^(-D/L)): 浅いうちはほぼそのまま、深いほど止まる
     const L = LIMIT.depth;
     sTarget = D - L * (1 - Math.exp(-D / L));
   }
+  // 押し込みの深さをなめらかに追う (深くなるのは速く、浅くなるのはゆっくり)
+  hs.depth = THREE.MathUtils.lerp(hs.depth || 0, depthNow, 1 - Math.exp(-(depthNow > (hs.depth || 0) ? 30 : 12) * dt));
   const rate = sTarget > hs.s ? LIMIT.follow : LIMIT.release;
   hs.s += (sTarget - hs.s) * (1 - Math.exp(-rate * dt));
   if (hs.s < 1e-5) hs.s = 0;
@@ -595,7 +606,7 @@ function handCapsules(hs, dt = 1 / 72) {
   return { caps, contact, F };
 }
 
-// 手のひら全体でこねる / なでる
+// 手のひら全体でさわる (なでる / こねる)
 function handSculpt(hs, dt, t) {
   const { caps, contact, F } = handCapsules(hs, dt);
   if (contact) {
@@ -605,14 +616,22 @@ function handSculpt(hs, dt, t) {
     hs.contact = false;
   }
   if (!caps.length) return;
-  if (state.mode === 'knead') {
-    const moving = caps.filter((c) => Math.hypot(c.ux, c.uy, c.uz) > 0.01);
+  // 押し込みの深さで なでる ⇔ こねる を切り替える。k = 0: なでる / k = 1: こねる
+  const k = THREE.MathUtils.smoothstep(hs.depth || 0, TOUCH.kneadFrom, TOUCH.kneadFrom + TOUCH.kneadSpan);
+  if (k > 0.02) {
+    const moving = [];
+    for (const c of caps) {
+      c.ux *= k; c.uy *= k; c.uz *= k; // 浅いうちは粘土を動かす量も少なくする
+      if (Math.hypot(c.ux, c.uy, c.uz) > 0.01) moving.push(c);
+    }
     field.displace(moving, F);
-  } else if (state.mode === 'smooth' && contact) {
+  }
+  if (contact && k < 0.98) {
+    const strength = dt * 5 * (1 - k);
     for (const c of caps) {
       const R = c.r + F;
-      field.smooth({ x: (c.ax + c.bx) / 2, y: (c.ay + c.by) / 2, z: (c.az + c.bz) / 2 }, R, dt * 5);
-      field.smooth({ x: c.bx, y: c.by, z: c.bz }, R, dt * 5);
+      field.smooth({ x: (c.ax + c.bx) / 2, y: (c.ay + c.by) / 2, z: (c.az + c.bz) / 2 }, R, strength);
+      field.smooth({ x: c.bx, y: c.by, z: c.bz }, R, strength);
     }
   }
 }
@@ -704,7 +723,7 @@ function updateXR(dt, t) {
     }
     if (hs.uiPinch && !hit) hit = hs.uiHit; // つまんでいる間は、レイが板をはずれても同じ板を操作し続ける
     const pointing = !!hit;
-    updateTouchLimit(hs, dt, !pointing && !hs.pinching && (state.mode === 'knead' || state.mode === 'smooth'));
+    updateTouchLimit(hs, dt, !pointing && !hs.pinching && state.mode === 'touch');
     tipJ.getWorldPosition(_tipRaw);
     thumbJ.getWorldPosition(_thumbRaw);
     hs.tip.copy(hs.tipF.filter(_tipRaw, t));
@@ -753,8 +772,8 @@ function updateXR(dt, t) {
       continue;
     }
 
-    if (state.mode === 'add' || state.mode === 'paint') {
-      // 盛る / 塗る: 人差し指の先で。指を閉じかけている間は止める
+    if (state.mode === 'paint') {
+      // 塗る: 人差し指の先で。指を閉じかけている間は止める
       const allowed = pinchDist > PRE_PINCH;
       const r = worldLenToGrid(state.brushR);
       const s = field.sample(worldToGrid(hs.tip, _w));
@@ -764,9 +783,8 @@ function updateXR(dt, t) {
       } else if (s > r || !allowed) {
         hs.touching = false;
       }
-      const cc = state.mode === 'paint' ? state.color : MODES.add.color;
-      showCursor(hs.cursor, hs.tip, state.brushR, cc, allowed ? (hs.touching ? 0.4 : 0.18) : 0.06);
-    } else {
+      showCursor(hs.cursor, hs.tip, state.brushR, state.color, allowed ? (hs.touching ? 0.4 : 0.18) : 0.06);
+    } else if (state.mode === 'touch') {
       handSculpt(hs, dt, t);
     }
     rememberJoints(hs);
@@ -782,8 +800,9 @@ const row = (j) => -j * (bh + gap);
 const PANEL_W = 4 * bw + 3 * gap;
 const swatchW = (PANEL_W - 5 * gap) / 6, shh = 0.03; // 色見本
 const panel = new ButtonPanel([
-  ...['knead', 'add', 'smooth', 'paint'].map((m, i) => ({
-    id: m, label: MODES[m].label, x: col(i), y: row(0), w: bw, h: bh, color: MODES[m].color,
+  ...['touch', 'paint'].map((m, i) => ({
+    id: m, label: m === 'touch' ? 'さわる (なでる・こねる)' : MODES[m].label,
+    x: (col(i * 2) + col(i * 2 + 1)) / 2, y: row(0), w: 2 * bw + gap, h: bh, color: MODES[m].color,
     onPress: () => setMode(m), isActive: () => state.mode === m,
   })),
   { id: 'smaller', label: '− 小', x: col(0), y: row(1), w: bw, h: bh, onPress: () => setBrush(state.brushR - 0.003) },
@@ -798,7 +817,7 @@ const panel = new ButtonPanel([
     w: swatchW, h: shh, onPress: () => setColor(c), isActive: () => state.color === c,
   })),
 ], {
-  title: ['手のひらで触れる: こねる / なでる', '盛る・塗る: 人差し指の先で (下の色を使う)', 'つまむ: 引っ張る / 空中: 移動・両手で回転'],
+  title: ['さわる: 手のひらで軽く触れる=なでる / 深く押す=こねる', '塗る: 人差し指の先で (下の色を使う)', 'つまむ: 引っ張る / 空中: 移動・両手で回転'],
 });
 panel.group.position.set(-0.3, 0.02, 0.08);
 panel.group.rotation.set(-0.3, 0.6, 0, 'YXZ');
@@ -821,6 +840,8 @@ const PARAMS = [
   { id: 'relax', label: 'なめらかさ', hint: '手が触れた所を毎フレームならす強さ',
     min: 0, max: 0.5, get: () => field.relax, set: (v) => { field.relax = v; }, format: (v) => `${Math.round(v * 200)}%` },
 ];
+PARAMS.push({ id: 'kneadFrom', label: 'こねる開始', hint: '手を押し込んだ深さがこれより浅いとなでるだけ。深いほどこねる。小さくすると、軽く押しただけでこねる',
+  min: 0.002, max: 0.02, get: () => TOUCH.kneadFrom, set: (v) => { TOUCH.kneadFrom = v; }, format: (v) => `${(v * 1000).toFixed(0)}mm` });
 const PARAM_DEFAULTS = Object.fromEntries(PARAMS.map((p) => [p.id, p.get()]));
 const PARAM_KEY = 'clayxr.params.v1';
 let saveTimer = 0;
@@ -888,7 +909,7 @@ let recenterPending = false;
 let xrStartT = 0;
 
 // ---- 状態表示 (画面の UI と、XR 中は目の前の文字板) ----
-const VERSION = '0.6.5';
+const VERSION = '0.6.6';
 const logLines = [];
 function log(msg) {
   const line = `${new Date().toLocaleTimeString()} ${msg}`;
@@ -961,7 +982,7 @@ async function startXR(mode) {
     renderer.xr.setReferenceSpaceType(feats && !feats.includes('local-floor') ? 'local' : 'local-floor');
     savedCam = { pos: camera.position.clone(), quat: camera.quaternion.clone(), target: controls.target.clone() };
     xrMode = mode;
-    if (state.mode === 'pull') setMode('knead');
+    if (state.mode === 'pull') setMode('touch');
     session.addEventListener('end', () => {
       log('XR を終了しました');
       xrMode = null;
@@ -1016,6 +1037,7 @@ const ui = {
 function setXRMessage(t) { ui.xrmsg.textContent = t; }
 
 for (const [m, def] of Object.entries(MODES)) {
+  if (def.hidden) continue;
   const b = document.createElement('button');
   b.dataset.mode = m;
   b.textContent = def.label;
@@ -1045,8 +1067,8 @@ function setColor(c) {
   state.color = c.toLowerCase();
   for (const b of paletteEl.children) b.classList.toggle('active', b.dataset.color === state.color);
   colorPick.value = state.color;
-  // 色を選んだら、盛る以外は「塗る」にする
-  if (state.mode !== 'add' && state.mode !== 'paint') setMode('paint');
+  // 色を選んだら「塗る」にする
+  if (state.mode !== 'paint') setMode('paint');
 }
 function setBrush(r) {
   state.brushR = THREE.MathUtils.clamp(r, 0.006, 0.04);
@@ -1094,7 +1116,7 @@ syncParamInputs();
 addEventListener('keydown', (e) => {
   if (e.target.closest?.('input, textarea, select')) return; // 名前などを入力中
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); return; }
-  const keys = { 1: 'knead', 2: 'add', 3: 'smooth', 4: 'pull', 5: 'paint' };
+  const keys = { 1: 'touch', 2: 'pull', 3: 'paint' };
   if (keys[e.key]) setMode(keys[e.key]);
   if (e.key === '[') setBrush(state.brushR - 0.002);
   if (e.key === ']') setBrush(state.brushR + 0.002);

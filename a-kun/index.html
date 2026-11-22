@@ -26,7 +26,7 @@
   .panel.collapsed > :not(.head):not(#pstatus) { display: none; }
   .panel.collapsed .head { margin-bottom: 0; }
   .label { color: var(--muted); font-size: 11px; margin: 12px 0 6px; }
-  #modes { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+  #modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
   #modes button { padding: 7px 0; font-size: 12px; white-space: nowrap; }
   button { font: inherit; color: var(--fg); background: var(--btn); border: 1px solid var(--line);
     border-radius: 8px; padding: 7px 8px; cursor: pointer; }
@@ -109,7 +109,7 @@
   <div class="head"><h1>粘土 <small>Clay XR <span id="ver"></span></small></h1><button class="fold" title="たたむ">–</button></div>
   <div class="label">道具</div>
   <div id="modes"></div>
-  <div class="label">色 (塗る・盛るときの色)</div>
+  <div class="label">色 (塗るときの色)</div>
   <div id="palette"></div>
   <label class="custom">ほかの色 <input id="colorPick" type="color"></label>
   <div class="label">ブラシの大きさ</div>
@@ -129,10 +129,10 @@
   <details>
     <summary>操作方法</summary>
     <ul>
-      <li>粘土の上を左ドラッグ: 選んだ道具で造形 (塗るは表面に色を付ける)</li>
+      <li>粘土の上を左ドラッグ: 選んだ道具で造形。さわる=こねる (<kbd>Shift</kbd> を押しながら=なでる)、塗る=表面に色を付ける</li>
       <li>何もない所を左ドラッグ: 視点を回す / 右ドラッグ: 平行移動 / ホイール: ズーム</li>
-      <li><kbd>1</kbd>〜<kbd>5</kbd> 道具 / <kbd>[</kbd> <kbd>]</kbd> 大きさ / <kbd>⌘Z</kbd> 戻す</li>
-      <li>XR: 手のひらで触れる=こねる/なでる、盛る・塗るは人差し指、つまむ=引っ張る、空中でつまむ=移動、両手でつまむ=回転・拡大</li>
+      <li><kbd>1</kbd>〜<kbd>3</kbd> 道具 / <kbd>[</kbd> <kbd>]</kbd> 大きさ / <kbd>⌘Z</kbd> 戻す</li>
+      <li>XR: 手のひらで触れる=軽く=なでる / 深く押す=こねる、塗るは人差し指、つまむ=引っ張る、空中でつまむ=移動、両手でつまむ=回転・拡大</li>
     </ul>
   </details>
 </div>
@@ -144,6 +144,6 @@
 </div>
 
 <div id="toasts" aria-live="polite"></div>
-<script type="module" src="./src/main.js?v=0.6.5"></script>
+<script type="module" src="./src/main.js?v=0.6.6"></script>
 </body>
 </html>
