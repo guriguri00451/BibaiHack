@@ -3,9 +3,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ClayField } from './sdf.js?v=0.6.7';
-import { ButtonPanel } from './panel.js?v=0.6.7';
-import { initPost } from './post/ui.js?v=0.6.7';
+import { ClayField } from './sdf.js?v=0.6.8';
+import { ButtonPanel } from './panel.js?v=0.6.8';
+import { initPost } from './post/ui.js?v=0.6.8';
 
 // ================= 設定 =================
 const CLAY_HOME = new THREE.Vector3(0, 1.1, -0.45);
@@ -21,8 +21,8 @@ const MODES = {
 };
 // 押し込みの深さ (本物の手が粘土の表面からめり込んだ深さ, m) と、なでる→こねるの切り替え
 const TOUCH = {
-  kneadFrom: 0.004, // これより浅いと、こねずになでるだけ
-  kneadSpan: 0.010, // ここから kneadFrom + kneadSpan まで、なでる→こねるへなめらかに切り替わる
+  kneadFrom: 0.015, // これより浅いと、こねずになでるだけ (ぎゅーっと奥まで押し込んで、はじめてこねる)
+  kneadSpan: 0.015, // ここから kneadFrom + kneadSpan まで、なでる→こねるへなめらかに切り替わる
 };
 // 塗るときの色 (sRGB)
 const PALETTE = [
@@ -845,8 +845,8 @@ const PARAMS = [
   { id: 'relax', label: 'なめらかさ', hint: '手が触れた所を毎フレームならす強さ',
     min: 0, max: 0.5, get: () => field.relax, set: (v) => { field.relax = v; }, format: (v) => `${Math.round(v * 200)}%` },
 ];
-PARAMS.push({ id: 'kneadFrom', label: 'こねる開始', hint: '手を押し込んだ深さがこれより浅いとなでるだけ。深いほどこねる。小さくすると、軽く押しただけでこねる',
-  min: 0.002, max: 0.02, get: () => TOUCH.kneadFrom, set: (v) => { TOUCH.kneadFrom = v; }, format: (v) => `${(v * 1000).toFixed(0)}mm` });
+PARAMS.push({ id: 'kneadDepth', label: 'こねる開始', hint: '手を押し込んだ深さがこれより浅いとなでるだけ。深いほどこねる。小さくすると、軽く押しただけでこねる',
+  min: 0.004, max: 0.04, get: () => TOUCH.kneadFrom, set: (v) => { TOUCH.kneadFrom = v; }, format: (v) => `${(v * 1000).toFixed(0)}mm` });
 const PARAM_DEFAULTS = Object.fromEntries(PARAMS.map((p) => [p.id, p.get()]));
 const PARAM_KEY = 'clayxr.params.v1';
 let saveTimer = 0;
@@ -914,7 +914,7 @@ let recenterPending = false;
 let xrStartT = 0;
 
 // ---- 状態表示 (画面の UI と、XR 中は目の前の文字板) ----
-const VERSION = '0.6.7';
+const VERSION = '0.6.8';
 const logLines = [];
 function log(msg) {
   const line = `${new Date().toLocaleTimeString()} ${msg}`;
