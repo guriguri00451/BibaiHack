@@ -1,4 +1,5 @@
 using Seeker.Ar;
+using Seeker.Sync;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.XR.ARFoundation;
@@ -14,12 +15,16 @@ namespace Seeker.App
     public sealed class SeekerArController : MonoBehaviour
     {
         [SerializeField] private ARTrackedImageManager imageManager;
+        [SerializeField] private SyncedObjectsController syncedObjects;
 
         private readonly CoordinateAdapter adapter = new CoordinateAdapter();
         private Text statusLabel;
         private void Awake()
         {
             BuildUi();
+            // シーンに置いていなければ実行時に足す（接続先は SyncedObjectsController の既定値 = モック）
+            if (syncedObjects == null) syncedObjects = gameObject.AddComponent<SyncedObjectsController>();
+            syncedObjects.Configure(adapter);
         }
 
         private void OnEnable() => imageManager.trackablesChanged.AddListener(OnTrackablesChanged);
