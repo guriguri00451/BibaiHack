@@ -19,8 +19,6 @@ import { ApiError } from "./errors.ts";
 export type ApiDeps = {
   db: Db;
   jwtSecret: string;
-  /** REST で参加者が増えたことをゲーム状態（メモリ）へ伝える */
-  onPlayerJoined?: (sessionId: string, player: { playerId: string; name: string }) => void;
 };
 
 const json = <T extends z.ZodType>(schema: T, description: string) => ({
@@ -124,10 +122,7 @@ export function registerRoutes(app: OpenAPIHono, deps: ApiDeps) {
         .onConflictDoNothing({ target: [gamePlayers.sessionId, gamePlayers.userId] })
         .returning();
       let playerId = inserted[0]?.id;
-      if (playerId) {
-        const [user] = await db.select().from(users).where(eq(users.id, userId));
-        deps.onPlayerJoined?.(sessionId, { playerId, name: user?.name ?? "" });
-      } else {
+      if (!playerId) {
         const [existing] = await db
           .select({ id: gamePlayers.id })
           .from(gamePlayers)

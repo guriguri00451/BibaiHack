@@ -1,10 +1,10 @@
 import { loadConfig } from "./config.ts";
 import { openDb } from "./db/client.ts";
-import { createApp } from "./http/app.ts";
+import { createServer } from "./server.ts";
 
 const config = loadConfig();
 const { db } = await openDb(config);
-const app = createApp({ db, jwtSecret: config.jwtSecret });
+const { fetch, websocket } = createServer({ db, jwtSecret: config.jwtSecret });
 
-const server = Bun.serve({ port: config.port, fetch: app.fetch });
+const server = Bun.serve({ port: config.port, fetch, websocket });
 console.log(`bibai-server listening on :${server.port}`);
