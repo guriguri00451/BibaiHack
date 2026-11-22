@@ -1,25 +1,19 @@
-# bibai-game VM（wds-pve VMID 100）の本番構成。https://bibai.t0waxx.com
-# VM では /opt/bibai に置き、.env で SERVER_DIR=./server を指定する（README 参照）
+# 生成物。直接編集せず deploy/envs.txt を直して ./deploy/render.sh を実行する
+# bibai-game VM（wds-pve VMID 100）の /opt/bibai に置いて使う。https://bibai.t0waxx.com
 name: bibai
+
+x-server: &server
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+
 services:
   cloudflared:
     image: cloudflare/cloudflared:2026.11.1
     command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
     volumes:
       - ./cloudflared:/etc/cloudflared:ro
-    depends_on:
-      server:
-        condition: service_healthy
-    restart: unless-stopped
-
-  server:
-    build: ${SERVER_DIR:-../server}
-    environment:
-      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/bibai
-      JWT_SECRET: ${JWT_SECRET:?}
-    depends_on:
-      postgres:
-        condition: service_healthy
     restart: unless-stopped
 
   postgres:
@@ -36,6 +30,105 @@ services:
       timeout: 3s
       retries: 10
     restart: unless-stopped
+
+  server-prod:
+    <<: *server
+    build: ./envs/prod/server
+    image: bibai-server:prod
+    environment:
+      NODE_ENV: production
+      BASE_PATH: ""
+      PUBLIC_URL: https://bibai.t0waxx.com
+      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/prod
+      JWT_SECRET: ${JWT_SECRET_PROD:?}
+
+  server-stg:
+    <<: *server
+    build: ./envs/stg/server
+    image: bibai-server:stg
+    environment:
+      NODE_ENV: production
+      BASE_PATH: "/stg"
+      PUBLIC_URL: https://bibai.t0waxx.com
+      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/stg
+      JWT_SECRET: ${JWT_SECRET_STG:?}
+
+  server-dev:
+    <<: *server
+    build: ./envs/dev/server
+    image: bibai-server:dev
+    environment:
+      NODE_ENV: production
+      BASE_PATH: "/dev"
+      PUBLIC_URL: https://bibai.t0waxx.com
+      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/dev
+      JWT_SECRET: ${JWT_SECRET_DEV:?}
+
+  server-a-kun-01:
+    <<: *server
+    build: ./envs/a-kun-01/server
+    image: bibai-server:a-kun-01
+    environment:
+      NODE_ENV: production
+      BASE_PATH: "/a-kun-01"
+      PUBLIC_URL: https://bibai.t0waxx.com
+      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/a_kun_01
+      JWT_SECRET: ${JWT_SECRET_A_KUN_01:?}
+
+  server-a-kun-02:
+    <<: *server
+    build: ./envs/a-kun-02/server
+    image: bibai-server:a-kun-02
+    environment:
+      NODE_ENV: production
+      BASE_PATH: "/a-kun-02"
+      PUBLIC_URL: https://bibai.t0waxx.com
+      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/a_kun_02
+      JWT_SECRET: ${JWT_SECRET_A_KUN_02:?}
+
+  server-a-kun-03:
+    <<: *server
+    build: ./envs/a-kun-03/server
+    image: bibai-server:a-kun-03
+    environment:
+      NODE_ENV: production
+      BASE_PATH: "/a-kun-03"
+      PUBLIC_URL: https://bibai.t0waxx.com
+      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/a_kun_03
+      JWT_SECRET: ${JWT_SECRET_A_KUN_03:?}
+
+  server-so-ma-01:
+    <<: *server
+    build: ./envs/so-ma-01/server
+    image: bibai-server:so-ma-01
+    environment:
+      NODE_ENV: production
+      BASE_PATH: "/so-ma-01"
+      PUBLIC_URL: https://bibai.t0waxx.com
+      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/so_ma_01
+      JWT_SECRET: ${JWT_SECRET_SO_MA_01:?}
+
+  server-so-ma-02:
+    <<: *server
+    build: ./envs/so-ma-02/server
+    image: bibai-server:so-ma-02
+    environment:
+      NODE_ENV: production
+      BASE_PATH: "/so-ma-02"
+      PUBLIC_URL: https://bibai.t0waxx.com
+      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/so_ma_02
+      JWT_SECRET: ${JWT_SECRET_SO_MA_02:?}
+
+  server-so-ma-03:
+    <<: *server
+    build: ./envs/so-ma-03/server
+    image: bibai-server:so-ma-03
+    environment:
+      NODE_ENV: production
+      BASE_PATH: "/so-ma-03"
+      PUBLIC_URL: https://bibai.t0waxx.com
+      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/so_ma_03
+      JWT_SECRET: ${JWT_SECRET_SO_MA_03:?}
 
 volumes:
   pgdata:
