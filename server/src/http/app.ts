@@ -1,7 +1,8 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { ApiError, errorBody } from "./errors.ts";
+import { type ApiDeps, registerRoutes } from "./routes.ts";
 
-export function createApp() {
+export function createApp(deps?: ApiDeps) {
   const app = new OpenAPIHono({
     // zod の検証に失敗したリクエストは、仕様書の形式で 400 を返す
     defaultHook: (result, c) => {
@@ -23,6 +24,7 @@ export function createApp() {
   app.notFound((c) => c.json(errorBody("NOT_FOUND", "Not found."), 404));
 
   app.get("/healthz", (c) => c.json({ ok: true }));
+  if (deps) registerRoutes(app, deps);
 
   return app;
 }
