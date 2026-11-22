@@ -228,7 +228,7 @@ export function initPost(h) {
       x: -(bw + gap) / 2, y: -0.04, w: bw, h: bh, color: '#81c784', onPress: post, isEnabled: () => !busy },
     { id: 'new', label: '新しく作る', x: (bw + gap) / 2, y: -0.04, w: bw, h: bh, onPress: newClay, isEnabled: () => !busy },
   ]);
-  xrPanel.group.position.set(0, 0.2, -0.08);
+  xrPanel.group.position.set(0, 0.2, h.panelZ ?? -0.08);
   xrPanel.group.visible = false;
   h.workspace.add(xrPanel.group);
 

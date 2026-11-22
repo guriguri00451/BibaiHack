@@ -2,12 +2,17 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ClayField } from './sdf.js?v=0.7.1';
-import { ButtonPanel } from './panel.js?v=0.7.1';
-import { initPost } from './post/ui.js?v=0.7.1';
+import { ClayField } from './sdf.js?v=0.8.0';
+import { ButtonPanel } from './panel.js?v=0.8.0';
+import { initPost } from './post/ui.js?v=0.8.0';
 
 // ================= 設定 =================
-const CLAY_HOME = new THREE.Vector3(0, 1.1, -0.45);
+// 立方体の大きさ: 作る粘土 (一辺 14cm) を 7 倍にして、一辺 約 1m の立方体にする。
+// 格子 (80³) は同じなので、1 マスは約 3.5cm になり、細かい造形はできない
+const CUBE_SCALE = 7;
+const CUBE_HALF = 0.07 * CUBE_SCALE;     // 立方体の半分の長さ (m)
+const PANEL_Z = CUBE_HALF + 0.06;        // パネルを置く位置: 立方体の手前の面から 6cm 手前
+const CLAY_HOME = new THREE.Vector3(0, CUBE_HALF + 0.05, -0.6); // 画面の初期位置 (床の近く)
 // さわる: XR では手の押し込みの深さで、軽く触れる=なでる / 深く押す=こねる に自動で切り替わる。
 //   画面では、ドラッグ=こねる / Shift+ドラッグ=なでる
 const MODES = {
@@ -28,7 +33,7 @@ const PALETTE = [
   '#c98060', '#8d5a3b', '#f2e6d0', '#ffffff', '#3b3b3b', '#d84a3a',
   '#f29a38', '#f2d14a', '#6bbf59', '#3f8fd2', '#7a5cc7', '#ef8fb5',
 ];
-const state = { mode: 'touch', brushR: 0.015, color: PALETTE[0] };
+const state = { mode: 'touch', brushR: 0.07, color: PALETTE[0] };
 let _rgbKey = '', _rgb = [0, 0, 0];
 function colorRGB() {
   if (_rgbKey !== state.color) {
@@ -54,7 +59,7 @@ const BG = new THREE.Color(0x1d2026);
 scene.background = BG;
 
 const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.01, 50);
-camera.position.set(0.24, 1.3, -0.02);
+camera.position.set(1.6, 1.3, 1.4);
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x3a3020, 1.3));
 const sun = new THREE.DirectionalLight(0xffffff, 2.2);
@@ -75,12 +80,14 @@ const pedestal = new THREE.Mesh(
   new THREE.CylinderGeometry(0.11, 0.13, 0.02, 48),
   new THREE.MeshStandardMaterial({ color: 0x4d525c, roughness: 0.6 }),
 );
-pedestal.position.y = -0.085;
+pedestal.scale.set(CUBE_SCALE, 1, CUBE_SCALE);
+pedestal.position.y = -CUBE_HALF - 0.015;
 workspace.add(pedestal);
 
 // ================= 粘土 =================
 const clay = new THREE.Group();
 clay.position.copy(CLAY_HOME);
+clay.scale.setScalar(CUBE_SCALE);
 scene.add(clay);
 
 const field = new ClayField({ N: 80, size: 0.4 });
@@ -173,7 +180,7 @@ function resetClay() {
   field.resetCube(0.07, 0.01);
   clay.position.copy(workspace.position);
   clay.quaternion.copy(workspace.quaternion);
-  clay.scale.setScalar(1);
+  clay.scale.setScalar(CUBE_SCALE);
   clay.updateMatrixWorld();
 }
 
@@ -299,8 +306,8 @@ el.addEventListener('pointerleave', () => { if (!stroke) desktopCursor.visible =
 const controls = new OrbitControls(camera, el);
 controls.target.copy(CLAY_HOME);
 controls.enableDamping = true;
-controls.minDistance = 0.15;
-controls.maxDistance = 3;
+controls.minDistance = 0.3;
+controls.maxDistance = 8;
 controls.update();
 
 // ================= XR: 手 =================
@@ -489,7 +496,7 @@ function updateObjectManip(movers) {
     const [a, b] = movers;
     const v = b.pinchPos.clone().sub(a.pinchPos);
     const mid = a.pinchPos.clone().add(b.pinchPos).multiplyScalar(0.5);
-    const newScale = THREE.MathUtils.clamp(manip.scale0 * v.length() / manip.v0.length(), 0.25, 4);
+    const newScale = THREE.MathUtils.clamp(manip.scale0 * v.length() / manip.v0.length(), CUBE_SCALE * 0.25, CUBE_SCALE * 4);
     const s = newScale / manip.scale0;
     const q = new THREE.Quaternion().setFromUnitVectors(manip.v0.clone().normalize(), v.normalize());
     clay.quaternion.copy(q).multiply(manip.quat0);
@@ -603,12 +610,14 @@ function rememberJoints(hs) {
   }
 }
 
+// 格子が粗いので、手の太さ・影響の幅が格子 1 マスより細くなりすぎないようにする (格子単位)
+const MIN_R_GRID = 1.2, MIN_F_GRID = 1.5;
 // 手のカプセルを格子座標にして、粘土に近いものだけ返す
 const _gm = new THREE.Vector3(), _n = new THREE.Vector3(), _u = new THREE.Vector3();
 function handCapsules(hs, dt = 1 / 72) {
   const caps = [];
   let contact = false;
-  const F = worldLenToGrid(VISC.F);
+  const F = Math.max(worldLenToGrid(VISC.F), MIN_F_GRID);
   const maxStep = worldLenToGrid(VISC.maxStep);
   for (const [a, b, rFixed] of BONES) {
     if (!hs.valid.has(a) || !hs.valid.has(b)) continue;
@@ -617,7 +626,7 @@ function handCapsules(hs, dt = 1 / 72) {
       const ra = hs.hand.joints[a].jointRadius, rb = hs.hand.joints[b].jointRadius;
       rw = ra && rb ? (ra + rb) / 2 : FINGER_R;
     }
-    const r = worldLenToGrid(rw);
+    const r = Math.max(worldLenToGrid(rw), MIN_R_GRID);
     const ga = worldToGrid(hs.jpos.get(a)), gb = worldToGrid(hs.jpos.get(b));
     _gm.addVectors(ga, gb).multiplyScalar(0.5);
     const sMin = Math.min(field.sample(ga), field.sample(gb), field.sample(_gm));
@@ -848,9 +857,9 @@ const panel = new ButtonPanel([
     x: (col(i * 2) + col(i * 2 + 1)) / 2, y: row(0), w: 2 * bw + gap, h: bh, color: MODES[m].color,
     onPress: () => setMode(m), isActive: () => state.mode === m,
   })),
-  { id: 'smaller', label: '− 小', x: col(0), y: row(1), w: bw, h: bh, onPress: () => setBrush(state.brushR - 0.003) },
+  { id: 'smaller', label: '− 小', x: col(0), y: row(1), w: bw, h: bh, onPress: () => setBrush(state.brushR - 0.01) },
   { id: 'size', label: () => `${Math.round(state.brushR * 1000)}mm`, x: col(1), y: row(1), w: bw, h: bh },
-  { id: 'bigger', label: '+ 大', x: col(2), y: row(1), w: bw, h: bh, onPress: () => setBrush(state.brushR + 0.003) },
+  { id: 'bigger', label: '+ 大', x: col(2), y: row(1), w: bw, h: bh, onPress: () => setBrush(state.brushR + 0.01) },
   { id: 'undo', label: '↶ 戻す', x: col(3), y: row(1), w: bw, h: bh, onPress: undo },
   { id: 'recenter', label: '手元へ', x: col(0), y: row(2), w: bw, h: bh, onPress: recenter },
   { id: 'reset', label: 'リセット', x: col(1), y: row(2), w: bw, h: bh, onPress: resetClay },
@@ -862,7 +871,7 @@ const panel = new ButtonPanel([
 ], {
   title: ['さわる: 手のひらで軽く触れる=なでる / 深く押す=こねる', '塗る: 人差し指の先で (下の色を使う)', 'つまむ: 引っ張る / 空中: 移動・両手で回転'],
 });
-panel.group.position.set(-0.3, 0.02, 0.08);
+panel.group.position.set(-0.3, 0.02, PANEL_Z);
 panel.group.rotation.set(-0.3, 0.6, 0, 'YXZ');
 panel.group.visible = false;
 workspace.add(panel.group);
@@ -918,7 +927,7 @@ const propPanel = new ButtonPanel([
   })),
   { id: 'paramReset', label: '初期値に戻す', x: 0, y: -PARAMS.length * (sh + sgap), w: sw, h: bh, onPress: resetParams },
 ], { title: ['粘土の性質 (指でなぞって調整)'] });
-propPanel.group.position.set(0.3, 0.1, 0.08);
+propPanel.group.position.set(0.3, 0.1, PANEL_Z);
 propPanel.group.rotation.set(-0.3, -0.6, 0, 'YXZ');
 propPanel.group.visible = false;
 workspace.add(propPanel.group);
@@ -928,7 +937,7 @@ workspace.add(propPanel.group);
 function recenter() {
   recenterFrom(camera.position, camera.quaternion);
 }
-const RECENTER = { forward: 0.45, drop: 0 }; // drop = 0: 粘土の中心が目と同じ高さ // m。粘土の中心の位置 (目から前へ・下へ)
+const RECENTER = { forward: 0.45, drop: 0 }; // forward: 立方体の手前の面までの距離 (m)。drop = 0: 立方体の中心が目と同じ高さ // m。粘土の中心の位置 (目から前へ・下へ)
 function recenterFrom(headPos, headQuat) {
   const head = new THREE.Vector3().copy(headPos);
   const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(headQuat);
@@ -936,7 +945,7 @@ function recenterFrom(headPos, headQuat) {
   if (fwd.lengthSq() < 1e-4) fwd.set(0, 0, -1);
   fwd.normalize();
   // 頭 (目) の高さが基準: 水平の視線方向に FORWARD、目から DROP だけ下に置く
-  workspace.position.copy(head).addScaledVector(fwd, RECENTER.forward).add(new THREE.Vector3(0, -RECENTER.drop, 0));
+  workspace.position.copy(head).addScaledVector(fwd, RECENTER.forward + 0.07 * clay.scale.x).add(new THREE.Vector3(0, -RECENTER.drop, 0));
   workspace.rotation.set(0, Math.atan2(-fwd.x, -fwd.z), 0);
   workspace.updateMatrixWorld();
   clay.position.copy(workspace.position);
@@ -952,7 +961,7 @@ let recenterPending = false;
 let xrStartT = 0;
 
 // ---- 状態表示 (画面の UI と、XR 中は目の前の文字板) ----
-const VERSION = '0.7.1';
+const VERSION = '0.8.0';
 const logLines = [];
 function log(msg) {
   const line = `${new Date().toLocaleTimeString()} ${msg}`;
@@ -972,7 +981,7 @@ const hud = (() => {
     new THREE.PlaneGeometry(0.34, 0.106),
     new THREE.MeshBasicMaterial({ map: tex, transparent: true }),
   );
-  mesh.position.set(0, 0.31, -0.08);
+  mesh.position.set(0, 0.31, PANEL_Z);
   mesh.visible = false;
   workspace.add(mesh);
   return {
@@ -1108,7 +1117,7 @@ function setColor(c) {
   if (state.mode !== 'paint') setMode('paint');
 }
 function setBrush(r) {
-  state.brushR = THREE.MathUtils.clamp(r, 0.006, 0.04);
+  state.brushR = THREE.MathUtils.clamp(r, 0.02, 0.2);
   ui.size.value = Math.round(state.brushR * 1000);
   ui.sizeVal.textContent = `${Math.round(state.brushR * 1000)}mm`;
 }
@@ -1155,8 +1164,8 @@ addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); return; }
   const keys = { 1: 'touch', 2: 'pull', 3: 'paint' };
   if (keys[e.key]) setMode(keys[e.key]);
-  if (e.key === '[') setBrush(state.brushR - 0.002);
-  if (e.key === ']') setBrush(state.brushR + 0.002);
+  if (e.key === '[') setBrush(state.brushR - 0.008);
+  if (e.key === ']') setBrush(state.brushR + 0.008);
 });
 
 async function checkXR() {
@@ -1241,7 +1250,7 @@ function exportGLB() {
 
 // ================= 投稿 (めっちゃ美唄) =================
 const post = initPost({
-  renderer, workspace, ButtonPanel,
+  renderer, workspace, ButtonPanel, panelZ: PANEL_Z,
   exportClay,
   snapshot: () => field.snapshot(),
   restore: restoreSnapshot,
