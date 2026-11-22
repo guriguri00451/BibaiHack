@@ -23,6 +23,7 @@ namespace Seeker.App
         private readonly CoordinateAdapter adapter = new CoordinateAdapter();
         private MapPresenter mapPresenter;
         private Text statusLabel;
+        private PhasePanelsView phasePanels;
 
         private void Awake()
         {
@@ -31,7 +32,16 @@ namespace Seeker.App
             // シーンに置いていなければ実行時に足す（接続先は SyncedObjectsController の既定値 = モック）
             if (syncedObjects == null) syncedObjects = gameObject.AddComponent<SyncedObjectsController>();
             syncedObjects.Configure(adapter);
+            syncedObjects.SessionChanged += RenderPhase;
+            RenderPhase();
         }
+
+        private void OnDestroy()
+        {
+            if (syncedObjects != null) syncedObjects.SessionChanged -= RenderPhase;
+        }
+
+        private void RenderPhase() => phasePanels.Render(syncedObjects.Session);
 
         private async void Start()
         {
@@ -83,6 +93,8 @@ namespace Seeker.App
             scaler.referenceResolution = new Vector2(1080f, 1920f);
 
             statusLabel = CreateText(canvasObject.transform, "マーカーを映してください", new Vector2(0.5f, 1f), new Vector2(0f, -120f), new Vector2(980f, 120f));
+            // マーカー状況は playing（探索中）の HUD。他フェーズでは全画面パネルが出る
+            phasePanels = new PhasePanelsView(canvasObject.transform, statusLabel.transform.parent.gameObject);
         }
 
         private static Font UiFont => Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
