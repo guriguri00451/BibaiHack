@@ -1,13 +1,22 @@
 import * as THREE from 'three';
+import { CoordinateAdapter } from './ar/coordinateAdapter.js';
+import { calibrateFromFrame, createTrackedImages } from './ar/markerTracker.js';
 
 const startButton = document.getElementById('start');
 const statusLabel = document.getElementById('status');
 const overlay = document.getElementById('overlay');
+const rescanButton = document.getElementById('rescan');
 
 let renderer;
 let reticle;
 let hitTestSource = null;
 let isHitTestRequested = false;
+
+const coordinateAdapter = new CoordinateAdapter();
+// 再スキャン待ちの間だけ true。原点がブレ続けないよう、合わせたらすぐ false に戻す
+let isScanningMarker = true;
+// マップ座標で配置するオブジェクトの親。キャリブレーション後に行列を流し込む
+let mapRoot;
 
 // iOS Safari など WebXR 未対応の端末はここで弾く（iPhone対応は別Issue）
 async function isArSupported() {
@@ -42,12 +51,45 @@ function createScene() {
   reticle.visible = false;
   scene.add(reticle);
 
+  // 完了条件の確認用: マップ原点(QR中心)の上に置く 10cm キューブ。2台で同じ場所に見えるはず
+  mapRoot = new THREE.Group();
+  mapRoot.matrixAutoUpdate = false;
+  mapRoot.visible = false;
+  const cube = new THREE.Mesh(
+    new THREE.BoxGeometry(0.1, 0.1, 0.1),
+    new THREE.MeshBasicMaterial({ color: 0xff3366 }),
+  );
+  cube.position.set(0, 0.05, 0);
+  mapRoot.add(cube);
+  scene.add(mapRoot);
+
   renderer.setAnimationLoop((_time, frame) => render(frame));
   return { scene, camera };
 }
 
+function updateMarkerCalibration(frame) {
+  if (!isScanningMarker) return;
+  if (!calibrateFromFrame(frame, renderer.xr.getReferenceSpace(), coordinateAdapter)) return;
+  isScanningMarker = false;
+  mapRoot.matrix.copy(coordinateAdapter.getLocalFromMapMatrix());
+  mapRoot.visible = true;
+  rescanButton.hidden = false;
+  statusLabel.textContent = 'マーカーで原点を合わせました';
+}
+
+function startRescan() {
+  coordinateAdapter.reset();
+  mapRoot.visible = false;
+  isScanningMarker = true;
+  rescanButton.hidden = true;
+  statusLabel.textContent = 'マーカーを映してください';
+}
+
 function render(frame) {
-  if (frame) updateReticle(frame);
+  if (frame) {
+    updateMarkerCalibration(frame);
+    updateReticle(frame);
+  }
   renderer.render(scene, camera);
 }
 
@@ -75,26 +117,33 @@ function updateReticle(frame) {
   const hits = frame.getHitTestResults(hitTestSource);
   if (hits.length === 0) {
     reticle.visible = false;
-    statusLabel.textContent = '端末をゆっくり動かして床や机を映してください';
+    if (isScanningMarker) statusLabel.textContent = '端末をゆっくり動かして床や机を映し、マーカーを映してください';
     return;
   }
   const pose = hits[0].getPose(renderer.xr.getReferenceSpace());
   reticle.visible = true;
   reticle.matrix.fromArray(pose.transform.matrix);
-  statusLabel.textContent = '平面を検出しました';
+  if (isScanningMarker) statusLabel.textContent = '平面を検出しました。マーカーを映してください';
 }
 
 async function startAr() {
   let session = null;
   let failureMessage = null;
   try {
+    // image-tracking は Chrome のフラグが必要なので optional。無効でも AR 自体は起動する
+    const trackedImages = await createTrackedImages();
     session = await navigator.xr.requestSession('immersive-ar', {
       requiredFeatures: ['hit-test'],
-      optionalFeatures: ['dom-overlay'],
+      optionalFeatures: ['dom-overlay', 'image-tracking'],
+      trackedImages,
       domOverlay: { root: overlay },
     });
+    if (!session.enabledFeatures?.includes('image-tracking')) {
+      statusLabel.textContent = 'image-tracking が無効です（chrome://flags の WebXR Incubations を有効化）';
+    }
     session.addEventListener('end', () => {
       startButton.hidden = false;
+      rescanButton.hidden = true;
       // 起動失敗で end() した場合は原因表示を上書きしない
       statusLabel.textContent = failureMessage ?? 'ARを終了しました';
     });
@@ -124,4 +173,5 @@ isArSupported().then((isSupported) => {
   statusLabel.textContent = 'ARを開始できます';
   startButton.hidden = false;
   startButton.addEventListener('click', startAr);
+  rescanButton.addEventListener('click', startRescan);
 });
