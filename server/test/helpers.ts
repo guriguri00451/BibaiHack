@@ -4,11 +4,11 @@ import { createServer } from "../src/server.ts";
 export const JWT_SECRET = "test-secret";
 
 /** PGlite 上でサーバーを起動する。テストファイルの先頭で await し、afterAll で stop を呼ぶ */
-export async function startServer() {
+export async function startServer(opts: { basePath?: string } = {}) {
   const { db, close } = await openDb({});
-  const srv = createServer({ db, jwtSecret: JWT_SECRET });
+  const srv = createServer({ db, jwtSecret: JWT_SECRET, basePath: opts.basePath });
   const server = Bun.serve({ port: 0, fetch: srv.fetch, websocket: srv.websocket });
-  const base = `http://localhost:${server.port}`;
+  const base = `http://localhost:${server.port}${opts.basePath ?? ""}`;
 
   async function request(method: string, path: string, body?: unknown, token?: string) {
     const res = await fetch(base + path, {
@@ -26,7 +26,7 @@ export async function startServer() {
 
   /** 受信を溜め、条件に合うものを待てる WebSocket クライアント */
   function connect() {
-    const ws = new WebSocket(`ws://localhost:${server.port}/v1/ws`);
+    const ws = new WebSocket(`ws://localhost:${server.port}${opts.basePath ?? ""}/v1/ws`);
     const inbox: any[] = [];
     const waiters: { pred: (m: any) => boolean; resolve: (m: any) => void }[] = [];
     let closedFlag = false;

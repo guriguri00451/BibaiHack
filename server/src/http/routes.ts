@@ -19,6 +19,8 @@ import { ApiError } from "./errors.ts";
 export type ApiDeps = {
   db: Db;
   jwtSecret: string;
+  /** OpenAPI の servers に載せる URL */
+  publicUrl?: string;
 };
 
 const json = <T extends z.ZodType>(schema: T, description: string) => ({
@@ -188,6 +190,6 @@ export function registerRoutes(app: OpenAPIHono, deps: ApiDeps) {
   app.doc31("/v1/openapi.json", {
     openapi: "3.1.0",
     info: { title: "めっちゃ美唄 Game Server API", version: "0.1.0" },
-    servers: [{ url: "https://bibai.t0waxx.com" }],
+    servers: [{ url: deps.publicUrl ?? "https://bibai.t0waxx.com" }],
   });
 }

@@ -5,6 +5,10 @@ export type Config = {
   /** PGlite の保存先。未指定ならメモリ上（再起動で消える） */
   pgliteDir?: string;
   jwtSecret: string;
+  /** この環境の URL の前置き（例 "/a-kun-01"）。本番は "" */
+  basePath: string;
+  /** 外から見たこの環境の URL（OpenAPI の servers に載せる） */
+  publicUrl: string;
 };
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -23,8 +27,16 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     console.warn("JWT_SECRET が未設定のため、一時的な値を使います（開発用）");
   }
 
+  const basePath = (env.BASE_PATH ?? "").replace(/\/+$/, "");
+  if (basePath && !/^\/[a-z0-9-]+$/.test(basePath)) {
+    throw new Error(`BASE_PATH は "/a-kun-01" のような形にしてください: ${env.BASE_PATH}`);
+  }
+  const publicUrl = (env.PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/+$/, "") + basePath;
+
   return {
     port,
+    basePath,
+    publicUrl,
     databaseUrl: env.DATABASE_URL || undefined,
     pgliteDir: env.PGLITE_DIR || undefined,
     jwtSecret,
