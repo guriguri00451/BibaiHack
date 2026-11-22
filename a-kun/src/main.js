@@ -3,9 +3,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ClayField } from './sdf.js?v=0.6.2';
-import { ButtonPanel } from './panel.js?v=0.6.2';
-import { initPost } from './post/ui.js?v=0.6.2';
+import { ClayField } from './sdf.js?v=0.6.3';
+import { ButtonPanel } from './panel.js?v=0.6.3';
+import { initPost } from './post/ui.js?v=0.6.3';
 
 // ================= 設定 =================
 const CLAY_HOME = new THREE.Vector3(0, 1.1, -0.45);
@@ -516,15 +516,8 @@ function updateTouchLimit(hs, dt, active) {
 }
 
 // 手のモデルの見た目: 見えている手はずらした位置に、ゴーストは本物の位置に
-// 手は常に半透明の色付きで見せる。粘土をグッと押したときだけ不透明 (透明度 0) にして、表面で止まった手をはっきり見せる
-const HAND = {
-  idleColor: new THREE.Color(0x7fd0ff), // ふだんの色
-  pressColor: new THREE.Color(0xe3c4b3), // 押しているときの色 (肌色)
-  idleOpacity: 0.35, // ふだんの不透明度。触れている間は 0 (消える)
-  pressFrom: 0.004, // 見えている手がこれ以上ずれたら (m)、不透明に向かう
-  pressTo: 0.011,   // ここまでずれたら完全に不透明
-};
-const handMat = new THREE.MeshStandardMaterial({ color: 0x7fd0ff, roughness: 0.55, transparent: true, opacity: 0.35 });
+// 手は常に不透明で見せる
+const handMat = new THREE.MeshStandardMaterial({ color: 0xe3c4b3, roughness: 0.55 });
 const ghostMat = new THREE.MeshBasicMaterial({ color: 0x9fd3ff, transparent: true, opacity: 0, depthTest: false, depthWrite: false });
 function updateHandVisuals(hs) {
   if (!hs.styled) {
@@ -540,18 +533,9 @@ function updateHandVisuals(hs) {
   const off = hs.offset.length();
   hs.model.position.copy(hs.offset);
   const ar = xrMode === 'immersive-ar';
-  // 押し込み具合 0〜1: 0 = ふだん (半透明の色付き) / 1 = グッと押している (不透明)
-  const press = THREE.MathUtils.smoothstep(off, HAND.pressFrom, HAND.pressTo);
-  // 触れ始めたら半透明の手はすぐに消す (本物の手と二重に見えないように)。離れたら戻る
-  const touching = hs.contact || off > 0.0005;
-  hs.idleVis = THREE.MathUtils.lerp(hs.idleVis ?? 1, touching ? 0 : 1, touching ? 0.5 : 0.2);
-  const handOpacity = Math.max(HAND.idleOpacity * hs.idleVis, press);
   hs.model.visible = true;
   hs.ghost.visible = !ar && off > 0.004;
   if (hs.styled) {
-    const hm = hs.model.getObjectByProperty('type', 'SkinnedMesh').material;
-    hm.opacity = handOpacity;
-    hm.color.lerpColors(HAND.idleColor, HAND.pressColor, press);
     hs.ghost.getObjectByProperty('type', 'SkinnedMesh').material.opacity = THREE.MathUtils.smoothstep(off, 0.004, 0.02) * 0.3;
   }
 }
@@ -814,7 +798,7 @@ let recenterPending = false;
 let xrStartT = 0;
 
 // ---- 状態表示 (画面の UI と、XR 中は目の前の文字板) ----
-const VERSION = '0.6.2';
+const VERSION = '0.6.3';
 const logLines = [];
 function log(msg) {
   const line = `${new Date().toLocaleTimeString()} ${msg}`;
@@ -1117,6 +1101,7 @@ renderer.setAnimationLoop((tms, frame) => {
       controls.update();
     }
     post.update();
+    field.conserve(); // 体積を一定に保つ
     remeshDirty();
   } catch (err) {
     const msg = `${err.name}: ${err.message}`;

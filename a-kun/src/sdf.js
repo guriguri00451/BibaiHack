@@ -38,6 +38,9 @@ export class ClayField {
     this.conserveBand = 6;   // 押しのけた分を盛り上げる帯の幅 (格子)
     this.conserveMax = 1.0;  // 1回で盛り上げる上限 (格子)
     this.relax = 0.15;       // 手が触れた所をなじませる強さ (0〜1)
+    this.V0 = null;          // 保つ体積 (占有する格子の数)
+    this._edit = null;       // 前回の conserve のあとに変えた範囲
+    this._rebase = false;    // 盛る・削るで体積を変えたので、基準を取り直す
 
     const L = chunk + 1;
     this._L = L;
@@ -71,6 +74,8 @@ export class ClayField {
       }
     }
     this.markAllDirty();
+    this.V0 = this.volume();
+    this._edit = null;
   }
 
   fillColor([r, g, b]) {
@@ -197,6 +202,7 @@ export class ClayField {
 
   _sphereOp(c, r, subtract, rgb = null) {
     const { N, d, col } = this;
+    this._rebase = true; // 盛る・削るは体積を変える道具なので、保つ体積を取り直す
     const [x0, x1, y0, y1, z0, z1] = this._box(c, r);
     let bx0 = Infinity, bx1 = -1, by0 = Infinity, by1 = -1, bz0 = Infinity, bz1 = -1;
     for (let z = z0; z <= z1; z++) {
@@ -494,6 +500,69 @@ export class ClayField {
     }
   }
 
+  // ---------- 体積の保存 ----------
+  // 粘土の体積 (占有する格子の数。表面をまたぐ格子は距離に応じた割合)
+  volume() {
+    const d = this.d;
+    let v = 0;
+    for (let i = 0; i < d.length; i++) {
+      const x = d[i];
+      v += x <= -0.5 ? 1 : x >= 0.5 ? 0 : 0.5 - x;
+    }
+    return v;
+  }
+
+  // 変えた範囲のまわりの表面を少し出し入れして、体積を V0 に戻す (1 フレームに 1 回呼ぶ)。
+  // 変えていなければ何もしない。盛る・削るのあとは、新しい体積を基準にする
+  conserve(margin = 8) {
+    const e = this._edit;
+    if (!e) return false;
+    this._edit = null;
+    const V = this.volume();
+    if (this._rebase || this.V0 === null) {
+      this._rebase = false;
+      this.V0 = V;
+      return false;
+    }
+    let remaining = this.V0 - V;
+    if (Math.abs(remaining) < 0.5) return false;
+    const { N, d } = this;
+    const NN = N * N;
+    const x0 = Math.max(1, e[0] - margin), x1 = Math.min(N - 2, e[1] + margin);
+    const y0 = Math.max(1, e[2] - margin), y1 = Math.min(N - 2, e[3] + margin);
+    const z0 = Math.max(1, e[4] - margin), z1 = Math.min(N - 2, e[5] + margin);
+    const occ = (v) => (v <= -0.5 ? 1 : v >= 0.5 ? 0 : 0.5 - v);
+    let changed = false;
+    for (let iter = 0; iter < 6 && Math.abs(remaining) >= 0.5; iter++) {
+      let A = 0;
+      for (let z = z0; z <= z1; z++) for (let y = y0; y <= y1; y++) {
+        let i = x0 + N * y + NN * z;
+        for (let x = x0; x <= x1; x++, i++) {
+          const v = d[i];
+          if (v > -1 && v < 2) A += 1 - Math.abs(v - 0.5) / 1.5;
+        }
+      }
+      if (A <= 0) break;
+      const delta = Math.max(-this.conserveMax, Math.min(this.conserveMax, remaining / A));
+      let gained = 0;
+      for (let z = z0; z <= z1; z++) for (let y = y0; y <= y1; y++) {
+        let i = x0 + N * y + NN * z;
+        for (let x = x0; x <= x1; x++, i++) {
+          const v = d[i];
+          if (v <= -1 || v >= 2) continue;
+          const nv = v - delta * (1 - Math.abs(v - 0.5) / 1.5);
+          gained += occ(nv) - occ(v);
+          d[i] = nv;
+        }
+      }
+      changed = true;
+      remaining -= gained;
+      if (Math.abs(gained) < 0.05) break;
+    }
+    if (changed) { this.markDirtyPoints(x0, x1, y0, y1, z0, z1); this._edit = null; }
+    return changed;
+  }
+
   // ---------- Undo ----------
   // 色は変わっていなければ前のスナップショットと同じ配列を共有する (メモリ節約。スナップショットは書き換えない)
 
@@ -510,6 +579,8 @@ export class ClayField {
     this.col.set(s.col);
     this.colVersion++;
     this.markAllDirty();
+    this.V0 = this.volume();
+    this._edit = null;
   }
 
   // ---------- チャンク管理 ----------
@@ -522,6 +593,13 @@ export class ClayField {
   // 格子点 [xa..xb] などが変わったとき、その点を読むチャンクを全部ダーティにする
   markDirtyPoints(xa, xb, ya, yb, za, zb) {
     const { S, K } = this;
+    const e = this._edit;
+    if (!e) this._edit = [xa, xb, ya, yb, za, zb];
+    else {
+      if (xa < e[0]) e[0] = xa; if (xb > e[1]) e[1] = xb;
+      if (ya < e[2]) e[2] = ya; if (yb > e[3]) e[3] = yb;
+      if (za < e[4]) e[4] = za; if (zb > e[5]) e[5] = zb;
+    }
     const kx0 = Math.max(0, Math.floor((xa - 1) / S)), kx1 = Math.min(K - 1, Math.floor((xb + 1) / S));
     const ky0 = Math.max(0, Math.floor((ya - 1) / S)), ky1 = Math.min(K - 1, Math.floor((yb + 1) / S));
     const kz0 = Math.max(0, Math.floor((za - 1) / S)), kz1 = Math.min(K - 1, Math.floor((zb + 1) / S));
