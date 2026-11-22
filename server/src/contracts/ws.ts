@@ -23,9 +23,19 @@ export const PlayerTransformInSchema = z.object({
   }),
 });
 
+export const ObjectTransformInSchema = z.object({
+  type: z.literal("object.transform"),
+  payload: z.object({
+    objectId: z.uuid(),
+    clientSeq: z.int().min(0),
+    transform: TransformSchema,
+  }),
+});
+
 export const ClientMessageSchema = z.discriminatedUnion("type", [
   AuthMessageSchema,
   PlayerTransformInSchema,
+  ObjectTransformInSchema,
 ]);
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;
 
@@ -48,6 +58,16 @@ export const SnapshotPlayerSchema = z.object({
   transform: TransformSchema.nullable(),
 });
 
+/** ケイにも見せてよい形。所有者・擬態フラグは含めない（仕様書 6.2-6） */
+export const SnapshotObjectSchema = z.object({
+  objectId: z.uuid(),
+  /** 永続キー。クライアントのキャッシュキー・差し替え判定に使う（署名は毎回変わるため assetUrl は使えない） */
+  assetKey: z.string(),
+  /** そのまま GET できる期限つき署名URL。ストレージ未設定の環境では付かない */
+  assetUrl: z.url().optional(),
+  transform: TransformSchema,
+});
+
 export const SessionSnapshotSchema = z.object({
   type: z.literal("session.snapshot"),
   ...ordered,
@@ -60,6 +80,8 @@ export const SessionSnapshotSchema = z.object({
     }),
     you: z.object({ playerId: z.uuid(), role: RoleSchema.nullable() }),
     players: z.array(SnapshotPlayerSchema),
+    /** 見せてよいオブジェクトだけ。準備中のケイには空 */
+    objects: z.array(SnapshotObjectSchema),
   }),
 });
 
@@ -67,6 +89,24 @@ export const PlayerTransformOutSchema = z.object({
   type: z.literal("player.transform"),
   ...ordered,
   payload: z.object({ playerId: z.uuid(), transform: TransformSchema }),
+});
+
+export const ObjectUpsertOutSchema = z.object({
+  type: z.enum(["object.created", "object.updated"]),
+  ...ordered,
+  payload: SnapshotObjectSchema,
+});
+
+export const ObjectDeletedOutSchema = z.object({
+  type: z.literal("object.deleted"),
+  ...ordered,
+  payload: z.object({ objectId: z.uuid() }),
+});
+
+export const ObjectTransformOutSchema = z.object({
+  type: z.literal("object.transform"),
+  ...ordered,
+  payload: z.object({ objectId: z.uuid(), transform: TransformSchema }),
 });
 
 export const ErrorMessageSchema = z.object({
@@ -78,6 +118,9 @@ export const ErrorMessageSchema = z.object({
 export const ServerMessageSchema = z.discriminatedUnion("type", [
   SessionSnapshotSchema,
   PlayerTransformOutSchema,
+  ObjectUpsertOutSchema,
+  ObjectDeletedOutSchema,
+  ObjectTransformOutSchema,
   ErrorMessageSchema,
 ]);
 export type ServerMessage = z.infer<typeof ServerMessageSchema>;

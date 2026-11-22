@@ -1,6 +1,8 @@
 import type { Server } from "bun";
 import type { Db } from "./db/client.ts";
+import { Connections } from "./game/connections.ts";
 import { GameRegistry } from "./game/registry.ts";
+import type { AssetStorage } from "./storage.ts";
 import { createApp } from "./http/app.ts";
 import { errorBody } from "./http/errors.ts";
 import { createWsHandler, type WsData } from "./ws/handler.ts";
@@ -9,11 +11,17 @@ import { createWsHandler, type WsData } from "./ws/handler.ts";
  * REST（Hono）と WebSocket（/v1/ws）を1つの Bun.serve にまとめる。
  * basePath（例 "/a-kun-01"）があれば、その前置きを外してから振り分ける。前置きの無いリクエストは 404
  */
-export function createServer(deps: { db: Db; jwtSecret: string; basePath?: string; publicUrl?: string }) {
+export function createServer(deps: { db: Db; jwtSecret: string; basePath?: string; publicUrl?: string; assetStorage?: AssetStorage }) {
   const basePath = deps.basePath ?? "";
   const registry = new GameRegistry(deps.db);
-  const app = createApp(deps);
-  const { websocket } = createWsHandler({ registry, jwtSecret: deps.jwtSecret });
+  const connections = new Connections();
+  const app = createApp({ ...deps, registry, connections });
+  const { websocket } = createWsHandler({
+    registry,
+    connections,
+    jwtSecret: deps.jwtSecret,
+    assetStorage: deps.assetStorage,
+  });
 
   return {
     registry,
