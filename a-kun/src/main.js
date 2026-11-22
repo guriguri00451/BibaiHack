@@ -2,14 +2,14 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ClayField } from './sdf.js?v=0.8.0';
-import { ButtonPanel } from './panel.js?v=0.8.0';
-import { initPost } from './post/ui.js?v=0.8.0';
+import { ClayField } from './sdf.js?v=0.8.1';
+import { ButtonPanel } from './panel.js?v=0.8.1';
+import { initPost } from './post/ui.js?v=0.8.1';
 
 // ================= 設定 =================
-// 立方体の大きさ: 作る粘土 (一辺 14cm) を 7 倍にして、一辺 約 1m の立方体にする。
-// 格子 (80³) は同じなので、1 マスは約 3.5cm になり、細かい造形はできない
-const CUBE_SCALE = 7;
+// 立方体の大きさ: 作る粘土 (一辺 14cm) を 3.5 倍にして、一辺 約 50cm の立方体にする。
+// 格子 (80³) は同じなので、1 マスは約 1.8cm になる
+const CUBE_SCALE = 3.5;
 const CUBE_HALF = 0.07 * CUBE_SCALE;     // 立方体の半分の長さ (m)
 const PANEL_Z = CUBE_HALF + 0.06;        // パネルを置く位置: 立方体の手前の面から 6cm 手前
 const CLAY_HOME = new THREE.Vector3(0, CUBE_HALF + 0.05, -0.6); // 画面の初期位置 (床の近く)
@@ -33,7 +33,7 @@ const PALETTE = [
   '#c98060', '#8d5a3b', '#f2e6d0', '#ffffff', '#3b3b3b', '#d84a3a',
   '#f29a38', '#f2d14a', '#6bbf59', '#3f8fd2', '#7a5cc7', '#ef8fb5',
 ];
-const state = { mode: 'touch', brushR: 0.07, color: PALETTE[0] };
+const state = { mode: 'touch', brushR: 0.04, color: PALETTE[0] };
 let _rgbKey = '', _rgb = [0, 0, 0];
 function colorRGB() {
   if (_rgbKey !== state.color) {
@@ -857,9 +857,9 @@ const panel = new ButtonPanel([
     x: (col(i * 2) + col(i * 2 + 1)) / 2, y: row(0), w: 2 * bw + gap, h: bh, color: MODES[m].color,
     onPress: () => setMode(m), isActive: () => state.mode === m,
   })),
-  { id: 'smaller', label: '− 小', x: col(0), y: row(1), w: bw, h: bh, onPress: () => setBrush(state.brushR - 0.01) },
+  { id: 'smaller', label: '− 小', x: col(0), y: row(1), w: bw, h: bh, onPress: () => setBrush(state.brushR - 0.005) },
   { id: 'size', label: () => `${Math.round(state.brushR * 1000)}mm`, x: col(1), y: row(1), w: bw, h: bh },
-  { id: 'bigger', label: '+ 大', x: col(2), y: row(1), w: bw, h: bh, onPress: () => setBrush(state.brushR + 0.01) },
+  { id: 'bigger', label: '+ 大', x: col(2), y: row(1), w: bw, h: bh, onPress: () => setBrush(state.brushR + 0.005) },
   { id: 'undo', label: '↶ 戻す', x: col(3), y: row(1), w: bw, h: bh, onPress: undo },
   { id: 'recenter', label: '手元へ', x: col(0), y: row(2), w: bw, h: bh, onPress: recenter },
   { id: 'reset', label: 'リセット', x: col(1), y: row(2), w: bw, h: bh, onPress: resetClay },
@@ -961,7 +961,7 @@ let recenterPending = false;
 let xrStartT = 0;
 
 // ---- 状態表示 (画面の UI と、XR 中は目の前の文字板) ----
-const VERSION = '0.8.0';
+const VERSION = '0.8.1';
 const logLines = [];
 function log(msg) {
   const line = `${new Date().toLocaleTimeString()} ${msg}`;
@@ -1117,7 +1117,7 @@ function setColor(c) {
   if (state.mode !== 'paint') setMode('paint');
 }
 function setBrush(r) {
-  state.brushR = THREE.MathUtils.clamp(r, 0.02, 0.2);
+  state.brushR = THREE.MathUtils.clamp(r, 0.01, 0.12);
   ui.size.value = Math.round(state.brushR * 1000);
   ui.sizeVal.textContent = `${Math.round(state.brushR * 1000)}mm`;
 }
@@ -1164,8 +1164,8 @@ addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); return; }
   const keys = { 1: 'touch', 2: 'pull', 3: 'paint' };
   if (keys[e.key]) setMode(keys[e.key]);
-  if (e.key === '[') setBrush(state.brushR - 0.008);
-  if (e.key === ']') setBrush(state.brushR + 0.008);
+  if (e.key === '[') setBrush(state.brushR - 0.004);
+  if (e.key === ']') setBrush(state.brushR + 0.004);
 });
 
 async function checkXR() {
