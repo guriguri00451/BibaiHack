@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 
 // XR 空間に浮かぶボタンとスライダー。指先で押す・なぞる。
-// ボタン:     { id, label (文字列 or 関数), x, y, w, h, onPress, isActive, color }
+// ボタン:     { id, label (文字列 or 関数), x, y, w, h, onPress, isActive, isEnabled, color, swatch }
+//   swatch: true なら色見本 (常に color で塗り、選ばれていると白い太枠)
 // スライダー: { id, type: 'slider', label, x, y, w, h, min, max, get, set, format }
 export class ButtonPanel {
   constructor(defs, { title = [] } = {}) {
@@ -80,22 +81,40 @@ export class ButtonPanel {
     b.tex.needsUpdate = true;
   }
 
-  _draw(b, active, flash, label) {
+  _draw(b, active, flash, label, enabled = true) {
     const ctx = b.canvas.getContext('2d');
     const W = b.canvas.width, H = b.canvas.height;
     ctx.clearRect(0, 0, W, H);
+    ctx.globalAlpha = enabled ? 1 : 0.35;
     ctx.beginPath();
-    ctx.roundRect(4, 4, W - 8, H - 8, 26);
-    ctx.fillStyle = flash ? '#ffffff' : active ? (b.color || '#4fc3f7') : '#2c313b';
-    ctx.fill();
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = active ? '#ffffff' : '#4a5160';
-    ctx.stroke();
-    ctx.fillStyle = active || flash ? '#111' : '#e8eaee';
-    ctx.font = `bold ${Math.round(H * 0.42)}px system-ui, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(label, W / 2, H / 2 + 2);
+    ctx.roundRect(4, 4, W - 8, H - 8, Math.min(26, H * 0.3));
+    if (b.swatch) {
+      ctx.fillStyle = b.color;
+      ctx.fill();
+      ctx.lineWidth = active ? 14 : 4;
+      ctx.strokeStyle = active ? '#ffffff' : '#4a5160';
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = flash ? '#ffffff' : active ? (b.color || '#4fc3f7') : '#2c313b';
+      ctx.fill();
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = active ? '#ffffff' : '#4a5160';
+      ctx.stroke();
+    }
+    if (label) {
+      ctx.fillStyle = active || flash ? '#111' : '#e8eaee';
+      // 幅に収まるまで文字を小さくする
+      let fs = Math.round(H * 0.42);
+      ctx.font = `bold ${fs}px system-ui, sans-serif`;
+      while (fs > 12 && ctx.measureText(label).width > W - 28) {
+        fs -= 2;
+        ctx.font = `bold ${fs}px system-ui, sans-serif`;
+      }
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, W / 2, H / 2 + 2);
+    }
+    ctx.globalAlpha = 1;
     b.tex.needsUpdate = true;
   }
 
@@ -110,12 +129,13 @@ export class ButtonPanel {
         continue;
       }
       const active = b.isActive ? b.isActive() : false;
+      const enabled = b.isEnabled ? b.isEnabled() : true;
       const flash = now - b.pressedAt < 180;
       const label = typeof b.label === 'function' ? b.label() : b.label;
-      const key = `${active}|${flash}|${label}`;
+      const key = `${active}|${flash}|${label}|${enabled}`;
       if (key !== b.key) {
         b.key = key;
-        this._draw(b, active, flash, label);
+        this._draw(b, active, flash, label, enabled);
       }
     }
   }
@@ -128,6 +148,7 @@ export class ButtonPanel {
     let hit = null;
     for (const b of this.buttons) {
       if (!b.onPress && b.type !== 'slider') continue;
+      if (b.isEnabled && !b.isEnabled()) continue;
       if (Math.abs(p.x - b.x) < b.w / 2 && Math.abs(p.y - b.y) < b.h / 2 && p.z < 0.015 && p.z > -0.025) {
         hit = b;
         break;

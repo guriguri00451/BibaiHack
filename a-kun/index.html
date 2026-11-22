@@ -2,44 +2,96 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Clay XR</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>めっちゃ美唄 Clay XR</title>
 <style>
   :root {
-    --bg: #1d2026; --panel: rgba(20, 23, 28, 0.86); --fg: #e8eaee; --muted: #9aa1ae;
-    --line: #3a404c; --btn: #2c313b;
+    --bg: #1d2026; --panel: rgba(20, 23, 28, 0.88); --fg: #e8eaee; --muted: #9aa1ae;
+    --line: #3a404c; --btn: #2c313b; --accent-clay: #c98060;
+    --good: #81c784; --bad: #ff6b6b;
   }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden;
     font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
   #app, #app canvas { position: fixed; inset: 0; display: block; }
-  #ui { position: fixed; top: 16px; left: 16px; width: 264px; max-width: calc(100vw - 32px);
-    max-height: calc(100vh - 32px); overflow-y: auto;
-    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px;
+  .panel { position: fixed; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px 14px;
     backdrop-filter: blur(8px); font-size: 13px; box-sizing: border-box; }
-  h1 { font-size: 16px; margin: 0 0 10px; letter-spacing: .02em; }
-  h1 small { color: var(--muted); font-weight: normal; font-size: 12px; margin-left: 6px; }
-  .label { color: var(--muted); font-size: 11px; margin: 10px 0 6px; }
-  #modes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .panel[hidden] { display: none; }
+  #ui { left: 16px; width: 284px; max-width: calc(100vw - 32px); }
+  #post { right: 16px; width: 300px; max-width: calc(100vw - 32px); }
+  .head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .head h1 { flex: 1; font-size: 15px; margin: 0; letter-spacing: .02em; white-space: nowrap; }
+  .head h1 small { color: var(--muted); font-weight: normal; font-size: 11px; margin-left: 6px; }
+  .head .fold { padding: 2px 9px; font-size: 14px; line-height: 1.2; }
+  .panel.collapsed > :not(.head):not(#pstatus) { display: none; }
+  .panel.collapsed .head { margin-bottom: 0; }
+  .label { color: var(--muted); font-size: 11px; margin: 12px 0 6px; }
+  #modes { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+  #modes button { padding: 7px 0; font-size: 12px; white-space: nowrap; }
   button { font: inherit; color: var(--fg); background: var(--btn); border: 1px solid var(--line);
-    border-radius: 8px; padding: 7px 6px; cursor: pointer; }
+    border-radius: 8px; padding: 7px 8px; cursor: pointer; }
   button:hover:not(:disabled) { border-color: #6b7384; }
   button:disabled { opacity: .4; cursor: not-allowed; }
   #modes button.active { background: var(--accent); color: #111; border-color: #fff; font-weight: 600; }
   .row { display: flex; gap: 6px; margin-top: 10px; }
   .row button { flex: 1; }
   .size { display: flex; align-items: center; gap: 8px; }
-  .size input { flex: 1; accent-color: #c98060; }
+  .size input { flex: 1; accent-color: var(--accent-clay); }
   #sizeVal { width: 40px; text-align: right; font-variant-numeric: tabular-nums; }
-  .xr button { background: #c98060; color: #111; border-color: #e3a487; font-weight: 600; }
+  #palette { display: grid; grid-template-columns: repeat(6, 1fr) ; gap: 5px; }
+  .swatch { height: 24px; padding: 0; border: 2px solid rgba(255,255,255,.15); border-radius: 6px; }
+  .swatch.active { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.35); }
+  .custom { display: flex; align-items: center; gap: 8px; margin-top: 6px; color: var(--muted); font-size: 12px; }
+  .custom input { width: 42px; height: 26px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: none; }
+  .xr button { background: var(--accent-clay); color: #111; border-color: #e3a487; font-weight: 600; }
   #xrmsg { color: var(--muted); font-size: 11px; margin: 6px 0 0; min-height: 1em; }
   details { margin-top: 10px; color: var(--muted); font-size: 12px; line-height: 1.6; }
   summary { cursor: pointer; color: var(--fg); }
-  .param { display: grid; grid-template-columns: 84px 1fr 42px; align-items: center; gap: 6px; margin-top: 6px; color: var(--fg); }
+  .param { display: grid; grid-template-columns: 70px 1fr 46px; align-items: center; gap: 6px; margin-top: 6px; color: var(--fg); }
   .param .pname { font-size: 12px; }
-  .param input { width: 100%; accent-color: #c98060; }
+  .param input { width: 100%; accent-color: var(--accent-clay); }
   .param .pval { text-align: right; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
   details ul { padding-left: 18px; margin: 6px 0 0; }
   kbd { background: #2c313b; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 11px; }
+
+  /* 投稿のパネル */
+  #pstatus { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+  .chip { font-size: 11px; padding: 2px 7px; border-radius: 999px; background: #2c313b; border: 1px solid var(--line);
+    white-space: nowrap; font-variant-numeric: tabular-nums; }
+  #pbody p { margin: 8px 0; line-height: 1.55; }
+  .muted { color: var(--muted); }
+  .hint { color: var(--muted); font-size: 11.5px; }
+  .field { display: grid; gap: 4px; margin: 8px 0; color: var(--muted); font-size: 12px; }
+  #pbody input { font: inherit; color: var(--fg); background: #15181d; border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 8px; box-sizing: border-box; min-width: 0; width: 100%; }
+  button.primary { background: var(--accent-clay); color: #111; border-color: #e3a487; font-weight: 700; }
+  button.wide { width: 100%; margin-top: 8px; padding: 9px 8px; }
+  .steps { margin: 4px 0; padding-left: 20px; line-height: 1.65; font-size: 12.5px; }
+  .row2 { display: flex; gap: 6px; margin-top: 6px; }
+  .row2 button { flex: 1; }
+  .objs { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
+  .objs li { display: flex; align-items: center; gap: 4px; padding: 4px 4px 4px 8px; border-radius: 8px; background: #1a1d23; border: 1px solid transparent; }
+  .objs li.sel { border-color: #ffd54f; }
+  .objname { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .objbtns { display: flex; gap: 3px; }
+  .objbtns button { padding: 4px 6px; font-size: 11.5px; }
+  .sub { margin-top: 12px; }
+
+  #toasts { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); display: grid; gap: 6px;
+    width: min(440px, calc(100vw - 32px)); pointer-events: none; z-index: 10; }
+  .toast { padding: 10px 14px; border-radius: 10px; background: rgba(20,23,28,.94); border: 1px solid var(--line);
+    font-size: 13px; line-height: 1.5; transition: opacity .5s, transform .5s; box-shadow: 0 6px 20px rgba(0,0,0,.35); }
+  .toast.good { border-color: var(--good); }
+  .toast.error { border-color: var(--bad); }
+  .toast.out { opacity: 0; transform: translateY(8px); }
+
+  /* スマホ: 投稿のパネルを上、粘土のパネルを下に */
+  @media (max-width: 720px) {
+    .panel { max-width: none; }
+    #post { top: 8px; left: 8px; right: 8px; width: auto; max-height: 40vh; }
+    #ui { top: auto; bottom: 8px; left: 8px; right: 8px; width: auto; max-height: 44vh; }
+    #toasts { bottom: auto; top: 50%; }
+  }
 </style>
 <script type="importmap">
 {
@@ -52,10 +104,14 @@
 </head>
 <body>
 <div id="app"></div>
-<div id="ui">
-  <h1>Clay XR <small>試作 <span id="ver"></span></small></h1>
+
+<div id="ui" class="panel">
+  <div class="head"><h1>粘土 <small>Clay XR <span id="ver"></span></small></h1><button class="fold" title="たたむ">–</button></div>
   <div class="label">道具</div>
   <div id="modes"></div>
+  <div class="label">色 (塗る・盛るときの色)</div>
+  <div id="palette"></div>
+  <label class="custom">ほかの色 <input id="colorPick" type="color"></label>
   <div class="label">ブラシの大きさ</div>
   <div class="size"><input id="size" type="range" min="6" max="40" step="1"><span id="sizeVal"></span></div>
   <div class="row">
@@ -73,13 +129,21 @@
   <details>
     <summary>操作方法</summary>
     <ul>
-      <li>粘土の上を左ドラッグ: 選んだ道具で造形</li>
+      <li>粘土の上を左ドラッグ: 選んだ道具で造形 (塗るは表面に色を付ける)</li>
       <li>何もない所を左ドラッグ: 視点を回す / 右ドラッグ: 平行移動 / ホイール: ズーム</li>
-      <li><kbd>1</kbd>〜<kbd>4</kbd> 道具 / <kbd>[</kbd> <kbd>]</kbd> 大きさ / <kbd>⌘Z</kbd> 戻す</li>
-      <li>XR: 手のひらで触れる=こねる/なでる、盛るは人差し指、つまむ=引っ張る、空中でつまむ=移動、両手でつまむ=回転・拡大</li>
+      <li><kbd>1</kbd>〜<kbd>5</kbd> 道具 / <kbd>[</kbd> <kbd>]</kbd> 大きさ / <kbd>⌘Z</kbd> 戻す</li>
+      <li>XR: 手のひらで触れる=こねる/なでる、盛る・塗るは人差し指、つまむ=引っ張る、空中でつまむ=移動、両手でつまむ=回転・拡大</li>
     </ul>
   </details>
 </div>
-<script type="module" src="./src/main.js?v=0.5.0"></script>
+
+<div id="post" class="panel">
+  <div class="head"><h1>投稿 <small>めっちゃ美唄</small></h1><button class="fold" title="たたむ">–</button></div>
+  <div id="pstatus"></div>
+  <div id="pbody"></div>
+</div>
+
+<div id="toasts" aria-live="polite"></div>
+<script type="module" src="./src/main.js?v=0.6.0"></script>
 </body>
 </html>

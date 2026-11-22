@@ -2,6 +2,7 @@
 // 値は格子単位の距離。負 = 粘土の内側、正 = 外側。
 // 表面は Surface Nets でチャンク(16^3)ごとにメッシュ化し、
 // 編集したチャンクだけを作り直す。
+// 色は格子点ごとの RGB (sRGB, 0-255) で持ち、押す・引っ張るときは形と一緒に動かす。
 
 // 立方体セルの12本の辺(角の番号のペア)。角の番号 = bx + 2*by + 4*bz
 const EA = [], EB = [];
@@ -9,6 +10,13 @@ for (let i = 0; i < 8; i++) {
   for (const bit of [1, 2, 4]) {
     if (!(i & bit)) { EA.push(i); EB.push(i | bit); }
   }
+}
+
+// sRGB (0-255) → リニア (頂点カラーはリニアで渡す)
+const SRGB_TO_LINEAR = new Float32Array(256);
+for (let i = 0; i < 256; i++) {
+  const c = i / 255;
+  SRGB_TO_LINEAR[i] = c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
 }
 
 export class ClayField {
@@ -22,6 +30,10 @@ export class ClayField {
     const total = N * N * N;
     this.d = new Float32Array(total);
     this.tmp = new Float32Array(total);
+    this.col = new Uint8Array(total * 3);    // 格子点の色 (sRGB)
+    this.tmpCol = new Uint8Array(total * 3);
+    this.colVersion = 0;                     // 色が変わるたびに増やす (Undo で色を共有するため)
+    this.baseColor = [0xc9, 0x80, 0x60];
     this.dirty = new Set();
     this.conserveBand = 6;   // 押しのけた分を盛り上げる帯の幅 (格子)
     this.conserveMax = 1.0;  // 1回で盛り上げる上限 (格子)
@@ -32,14 +44,18 @@ export class ClayField {
     this._map = new Int32Array(L * L * L);
     this._pos = new Float32Array(L * L * L * 3);
     this._nor = new Float32Array(L * L * L * 3);
+    this._col = new Float32Array(L * L * L * 3);
+    this._wts = new Float32Array(8);
+    this._ids = new Int32Array(8);
     this._idx = new Uint32Array(chunk * chunk * chunk * 3 * 6);
     this._c = new Float32Array(8);
   }
 
   // ---------- 初期形状 ----------
 
-  resetCube(b = 0.07, r = 0.01) {
+  resetCube(b = 0.07, r = 0.01, color = this.baseColor) {
     const { N, h, half, d } = this;
+    this.fillColor(color);
     for (let z = 0; z < N; z++) {
       for (let y = 0; y < N; y++) {
         for (let x = 0; x < N; x++) {
@@ -54,6 +70,13 @@ export class ClayField {
         }
       }
     }
+    this.markAllDirty();
+  }
+
+  fillColor([r, g, b]) {
+    const col = this.col;
+    for (let i = 0; i < col.length; i += 3) { col[i] = r; col[i + 1] = g; col[i + 2] = b; }
+    this.colVersion++;
     this.markAllDirty();
   }
 
@@ -136,7 +159,7 @@ export class ClayField {
     ];
   }
 
-  _copyToTmp(c, r) {
+  _copyToTmp(c, r, withCol = false) {
     const N = this.N;
     const xa = Math.max(0, Math.floor(c.x - r)), xb = Math.min(N - 1, Math.ceil(c.x + r));
     const ya = Math.max(0, Math.floor(c.y - r)), yb = Math.min(N - 1, Math.ceil(c.y + r));
@@ -146,8 +169,20 @@ export class ClayField {
       for (let y = ya; y <= yb; y++) {
         const row = N * (y + N * z);
         this.tmp.set(this.d.subarray(row + xa, row + xb + 1), row + xa);
+        if (withCol) this.tmpCol.set(this.col.subarray((row + xa) * 3, (row + xb + 1) * 3), (row + xa) * 3);
       }
     }
+  }
+
+  // tmpCol の最寄りの格子点の色を i に写す
+  _copyColNearest(i, x, y, z) {
+    const N = this.N, m = N - 1;
+    const ix = x < 0 ? 0 : x > m ? m : Math.round(x);
+    const iy = y < 0 ? 0 : y > m ? m : Math.round(y);
+    const iz = z < 0 ? 0 : z > m ? m : Math.round(z);
+    const j = (ix + N * (iy + N * iz)) * 3, k = i * 3;
+    const col = this.col, tc = this.tmpCol;
+    col[k] = tc[j]; col[k + 1] = tc[j + 1]; col[k + 2] = tc[j + 2];
   }
 
   // 球で削る (押し込む)
@@ -155,13 +190,13 @@ export class ClayField {
     return this._sphereOp(c, r, true);
   }
 
-  // 球を足す (盛る)
-  add(c, r) {
-    return this._sphereOp(c, r, false);
+  // 球を足す (盛る)。rgb を渡すと足した所をその色にする
+  add(c, r, rgb = null) {
+    return this._sphereOp(c, r, false, rgb);
   }
 
-  _sphereOp(c, r, subtract) {
-    const { N, d } = this;
+  _sphereOp(c, r, subtract, rgb = null) {
+    const { N, d, col } = this;
     const [x0, x1, y0, y1, z0, z1] = this._box(c, r);
     let bx0 = Infinity, bx1 = -1, by0 = Infinity, by1 = -1, bz0 = Infinity, bz1 = -1;
     for (let z = z0; z <= z1; z++) {
@@ -175,7 +210,10 @@ export class ClayField {
           let changed = false;
           if (subtract) {
             if (-sd > d[i] + 1e-4) { d[i] = -sd; changed = true; }
-          } else if (sd < d[i] - 1e-4) { d[i] = sd; changed = true; }
+          } else if (sd < d[i] - 1e-4) {
+            d[i] = sd; changed = true;
+            if (rgb) { const k = i * 3; col[k] = rgb[0]; col[k + 1] = rgb[1]; col[k + 2] = rgb[2]; }
+          }
           if (changed) {
             if (x < bx0) bx0 = x; if (x > bx1) bx1 = x;
             if (y < by0) by0 = y; if (y > by1) by1 = y;
@@ -185,8 +223,41 @@ export class ClayField {
       }
     }
     if (bx1 < 0) return false;
+    if (rgb && !subtract) this.colVersion++;
     this.markDirtyPoints(bx0, bx1, by0, by1, bz0, bz1);
     return true;
+  }
+
+  // 塗る: 球の中の色を rgb に寄せる (中心ほど強く)。形は変えない
+  paint(c, r, rgb, strength = 0.5) {
+    const { N, col } = this;
+    const [x0, x1, y0, y1, z0, z1] = this._box(c, r);
+    let any = false;
+    for (let z = z0; z <= z1; z++) {
+      const dz = z - c.z;
+      for (let y = y0; y <= y1; y++) {
+        const dy = y - c.y;
+        let i = x0 + N * (y + N * z);
+        for (let x = x0; x <= x1; x++, i++) {
+          const dx = x - c.x;
+          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          if (dist >= r) continue;
+          const t = dist / r;
+          const w = Math.min(1, (1 - t * t) * strength * 3); // 中ほどはしっかり、縁はぼかす
+          const k = i * 3;
+          for (let ch = 0; ch < 3; ch++) {
+            const v = col[k + ch];
+            const nv = Math.round(v + (rgb[ch] - v) * w);
+            if (nv !== v) { col[k + ch] = nv; any = true; }
+          }
+        }
+      }
+    }
+    if (any) {
+      this.colVersion++;
+      this.markDirtyPoints(x0, x1, y0, y1, z0, z1);
+    }
+    return any;
   }
 
   // なでる (ラプラシアン平滑化)
@@ -236,7 +307,7 @@ export class ClayField {
     const { N, d, tmp } = this;
     const e = { x: c.x + vx, y: c.y + vy, z: c.z + vz };
     const vlen = Math.hypot(vx, vy, vz);
-    this._copyToTmp(e, R + vlen + 2);
+    this._copyToTmp(e, R + vlen + 2, true);
     const [x0, x1, y0, y1, z0, z1] = this._box(e, R);
     let any = false;
     for (let z = z0; z <= z1; z++) {
@@ -251,12 +322,13 @@ export class ClayField {
           // 中心付近はまるごと付いてくる (細い糸にならないように)
           const u = Math.max(0, (dist / R - 0.35) / 0.65);
           const w = (1 - u * u) * (1 - u * u);
-          const v = this._tri(tmp, x - w * vx, y - w * vy, z - w * vz);
-          if (Math.abs(v - d[i]) > 1e-5) { d[i] = v; any = true; }
+          const sx = x - w * vx, sy = y - w * vy, sz = z - w * vz;
+          const v = this._tri(tmp, sx, sy, sz);
+          if (Math.abs(v - d[i]) > 1e-5) { d[i] = v; any = true; this._copyColNearest(i, sx, sy, sz); }
         }
       }
     }
-    if (any) this.markDirtyPoints(x0, x1, y0, y1, z0, z1);
+    if (any) { this.colVersion++; this.markDirtyPoints(x0, x1, y0, y1, z0, z1); }
     return any;
   }
 
@@ -334,7 +406,7 @@ export class ClayField {
 
     // 動かす前の値を tmp に写してから、そこを引いて読む
     const m = maxU + 2;
-    this._copyBox(gx0 - m, gx1 + m, gy0 - m, gy1 + m, gz0 - m, gz1 + m);
+    this._copyBox(gx0 - m, gx1 + m, gy0 - m, gy1 + m, gz0 - m, gz1 + m, true);
     const tmp = this.tmp;
     let bx0 = Infinity, bx1 = -1, by0 = Infinity, by1 = -1, bz0 = Infinity, bz1 = -1;
     const occ = (v) => (v <= -0.5 ? 1 : v >= 0.5 ? 0 : 0.5 - v);
@@ -344,10 +416,12 @@ export class ClayField {
       const w = uw[i];
       uw[i] = 0;
       const x = i % N, y = ((i / N) | 0) % N, z = (i / NN) | 0;
-      const v = this._tri(tmp, x - w * ux[i], y - w * uy[i], z - w * uz[i]);
+      const sx = x - w * ux[i], sy = y - w * uy[i], sz = z - w * uz[i];
+      const v = this._tri(tmp, sx, sy, sz);
       if (Math.abs(v - d[i]) > 1e-5) {
         lost += occ(d[i]) - occ(v);
         d[i] = v;
+        this._copyColNearest(i, sx, sy, sz);
         if (x < bx0) bx0 = x; if (x > bx1) bx1 = x;
         if (y < by0) by0 = y; if (y > by1) by1 = y;
         if (z < bz0) bz0 = z; if (z > bz1) bz1 = z;
@@ -383,6 +457,7 @@ export class ClayField {
       if (gained < 0.1) break;
     }
     if (bx1 < 0) return false;
+    this.colVersion++;
 
     // なじませる: 手が触れた所と縁を、まわりの平均へ少し寄せる (筋やギザギザを消し、柔らかく見せる)
     if (this.relax > 0) {
@@ -405,7 +480,7 @@ export class ClayField {
     return true;
   }
 
-  _copyBox(xa, xb, ya, yb, za, zb) {
+  _copyBox(xa, xb, ya, yb, za, zb, withCol = false) {
     const N = this.N;
     xa = Math.max(0, Math.floor(xa)); xb = Math.min(N - 1, Math.ceil(xb));
     ya = Math.max(0, Math.floor(ya)); yb = Math.min(N - 1, Math.ceil(yb));
@@ -414,16 +489,26 @@ export class ClayField {
       for (let y = ya; y <= yb; y++) {
         const row = N * (y + N * z);
         this.tmp.set(this.d.subarray(row + xa, row + xb + 1), row + xa);
+        if (withCol) this.tmpCol.set(this.col.subarray((row + xa) * 3, (row + xb + 1) * 3), (row + xa) * 3);
       }
     }
   }
 
   // ---------- Undo ----------
+  // 色は変わっていなければ前のスナップショットと同じ配列を共有する (メモリ節約。スナップショットは書き換えない)
 
-  snapshot() { return this.d.slice(); }
+  snapshot() {
+    if (!this._colSnap || this._colSnapVersion !== this.colVersion) {
+      this._colSnap = this.col.slice();
+      this._colSnapVersion = this.colVersion;
+    }
+    return { d: this.d.slice(), col: this._colSnap };
+  }
 
-  restore(arr) {
-    this.d.set(arr);
+  restore(s) {
+    this.d.set(s.d);
+    this.col.set(s.col);
+    this.colVersion++;
     this.markAllDirty();
   }
 
@@ -457,6 +542,7 @@ export class ClayField {
   meshChunk(key) {
     const { N, S, K, d, h, half } = this;
     const L = this._L, map = this._map, pos = this._pos, nor = this._nor, idx = this._idx, c = this._c;
+    const vcol = this._col, col = this.col, LIN = SRGB_TO_LINEAR, wts = this._wts, ids = this._ids;
     const NN = N * N;
     const kx = key % K, ky = Math.floor(key / K) % K, kz = Math.floor(key / (K * K));
     const x0 = kx * S, y0 = ky * S, z0 = kz * S;
@@ -507,6 +593,18 @@ export class ClayField {
           pos[p + 1] = -half + (y + fy) * h;
           pos[p + 2] = -half + (z + fz) * h;
           nor[p] = gx; nor[p + 1] = gy; nor[p + 2] = gz;
+          // 色 = 8 隅の色の三線形補間
+          const w0x = 1 - fx, w0y = 1 - fy, w0z = 1 - fz;
+          wts[0] = w0x * w0y * w0z; wts[1] = fx * w0y * w0z; wts[2] = w0x * fy * w0z; wts[3] = fx * fy * w0z;
+          wts[4] = w0x * w0y * fz; wts[5] = fx * w0y * fz; wts[6] = w0x * fy * fz; wts[7] = fx * fy * fz;
+          ids[0] = i0; ids[1] = i0 + 1; ids[2] = i0 + N; ids[3] = i0 + N + 1;
+          ids[4] = i0 + NN; ids[5] = i0 + NN + 1; ids[6] = i0 + NN + N; ids[7] = i0 + NN + N + 1;
+          let cr = 0, cg = 0, cb = 0;
+          for (let k = 0; k < 8; k++) {
+            const j = ids[k] * 3, wk = wts[k];
+            cr += LIN[col[j]] * wk; cg += LIN[col[j + 1]] * wk; cb += LIN[col[j + 2]] * wk;
+          }
+          vcol[p] = cr; vcol[p + 1] = cg; vcol[p + 2] = cb;
           map[(x - ox) + L * ((y - oy) + L * (z - oz))] = nv++;
         }
       }
@@ -550,6 +648,7 @@ export class ClayField {
     return {
       positions: pos.slice(0, nv * 3),
       normals: nor.slice(0, nv * 3),
+      colors: vcol.slice(0, nv * 3),
       indices: idx.slice(0, ni),
     };
   }

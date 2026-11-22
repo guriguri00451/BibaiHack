@@ -2,8 +2,10 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
-import { ClayField } from './sdf.js?v=0.5.0';
-import { ButtonPanel } from './panel.js?v=0.5.0';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { ClayField } from './sdf.js?v=0.6.0';
+import { ButtonPanel } from './panel.js?v=0.6.0';
+import { initPost } from './post/ui.js?v=0.6.0';
 
 // ================= 設定 =================
 const CLAY_HOME = new THREE.Vector3(0, 1.1, -0.45);
@@ -12,8 +14,23 @@ const MODES = {
   add: { label: '盛る', color: '#81c784' },
   smooth: { label: 'なでる', color: '#ffd54f' },
   pull: { label: 'つまむ', color: '#ff8a65' }, // デスクトップ用 (XR ではピンチが常に「つまむ」)
+  paint: { label: '塗る', color: '#f48fb1' },
 };
-const state = { mode: 'knead', brushR: 0.015 };
+// 塗る・盛るときの色 (sRGB)
+const PALETTE = [
+  '#c98060', '#8d5a3b', '#f2e6d0', '#ffffff', '#3b3b3b', '#d84a3a',
+  '#f29a38', '#f2d14a', '#6bbf59', '#3f8fd2', '#7a5cc7', '#ef8fb5',
+];
+const state = { mode: 'knead', brushR: 0.015, color: PALETTE[0] };
+let _rgbKey = '', _rgb = [0, 0, 0];
+function colorRGB() {
+  if (_rgbKey !== state.color) {
+    _rgbKey = state.color;
+    const n = parseInt(state.color.slice(1), 16);
+    _rgb = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  return _rgb;
+}
 const grabR = () => state.brushR * 2.2;
 const PINCH_ON = 0.02, PINCH_OFF = 0.04, PRE_PINCH = 0.05; // m
 
@@ -62,7 +79,8 @@ scene.add(clay);
 const field = new ClayField({ N: 80, size: 0.4 });
 field.resetCube(0.07, 0.01);
 
-const clayMat = new THREE.MeshStandardMaterial({ color: 0xc98060, roughness: 0.78, metalness: 0 });
+// 色は頂点カラー (格子点の色を補間したもの)
+const clayMat = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.78, metalness: 0 });
 const chunkMeshes = new Map();
 
 // 編集できる範囲 (格子の外枠) をうっすら表示
@@ -75,7 +93,7 @@ clay.add(bounds);
 function remeshDirty() {
   const keys = field.takeDirty();
   for (const key of keys) {
-    const { positions, normals, indices } = field.meshChunk(key);
+    const { positions, normals, colors, indices } = field.meshChunk(key);
     let m = chunkMeshes.get(key);
     if (!m) {
       m = new THREE.Mesh(new THREE.BufferGeometry(), clayMat);
@@ -87,6 +105,7 @@ function remeshDirty() {
     if (indices.length) {
       g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
       g.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+      g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
       g.setIndex(new THREE.BufferAttribute(indices, 1));
       g.computeBoundingSphere();
     }
@@ -117,7 +136,8 @@ function applyTool(mode, worldPos, strength = 0.5, dir = null) {
     const g2 = worldToGrid(new THREE.Vector3().copy(worldPos).addScaledVector(dir, state.brushR * 0.3));
     return field.pull(g, g2.sub(g), r * 1.6);
   }
-  if (mode === 'add') return field.add(g, r);
+  if (mode === 'add') return field.add(g, r, colorRGB());
+  if (mode === 'paint') return field.paint(g, r, colorRGB(), strength);
   if (mode === 'smooth') return field.smooth(g, r * 1.4, strength);
   return false;
 }
@@ -137,6 +157,11 @@ function undo() {
   const s = undoStack.pop();
   if (s) field.restore(s);
 }
+function restoreSnapshot(snap) {
+  pushUndo();
+  field.restore(snap);
+}
+// 立方体に戻して作業台の上に置き直す (「新しく作る」も同じ)
 function resetClay() {
   pushUndo();
   field.resetCube(0.07, 0.01);
@@ -202,7 +227,7 @@ function applyDesktopStroke(ray, first) {
     return;
   }
   // 削る・盛るはストローク開始時の形に当てる (同じ所をなぞっても掘り進まない・盛り上がり続けない)
-  const arr = m === 'smooth' ? field.d : stroke.base;
+  const arr = m === 'smooth' || m === 'paint' ? field.d : stroke.base.d;
   const hit = raymarchWorld(ray, arr);
   if (!hit) return;
   const center = hit.clone();
@@ -619,7 +644,7 @@ function updateXR(dt, t) {
     hs.cursor.visible = false;
 
     // ボタン
-    if (!hs.pinching && (panel.press(hs.tip, hs) || propPanel.press(hs.tip, hs))) {
+    if (!hs.pinching && (panel.press(hs.tip, hs) || propPanel.press(hs.tip, hs) || post.xrPanelPress(hs.tip, hs))) {
       rememberJoints(hs);
       continue;
     }
@@ -640,18 +665,19 @@ function updateXR(dt, t) {
       continue;
     }
 
-    if (state.mode === 'add') {
-      // 盛る: 人差し指の先から粘土を足す。指を閉じかけている間は止める
+    if (state.mode === 'add' || state.mode === 'paint') {
+      // 盛る / 塗る: 人差し指の先で。指を閉じかけている間は止める
       const allowed = pinchDist > PRE_PINCH;
       const r = worldLenToGrid(state.brushR);
       const s = field.sample(worldToGrid(hs.tip, _w));
       if (allowed && s < r * 0.6) {
         if (!hs.touching) { pushUndo(); hs.touching = true; }
-        applyTool('add', hs.tip);
+        applyTool(state.mode, hs.tip, 0.35);
       } else if (s > r || !allowed) {
         hs.touching = false;
       }
-      showCursor(hs.cursor, hs.tip, state.brushR, MODES.add.color, allowed ? (hs.touching ? 0.4 : 0.18) : 0.06);
+      const cc = state.mode === 'paint' ? state.color : MODES.add.color;
+      showCursor(hs.cursor, hs.tip, state.brushR, cc, allowed ? (hs.touching ? 0.4 : 0.18) : 0.06);
     } else {
       handSculpt(hs, dt, t);
     }
@@ -662,22 +688,29 @@ function updateXR(dt, t) {
 }
 
 // ================= XR: パネル =================
-const bw = 0.062, bh = 0.04, gap = 0.008;
-const col = (i) => (i - 1) * (bw + gap);
+const bw = 0.056, bh = 0.04, gap = 0.006;
+const col = (i) => (i - 1.5) * (bw + gap);
 const row = (j) => -j * (bh + gap);
+const PANEL_W = 4 * bw + 3 * gap;
+const swatchW = (PANEL_W - 5 * gap) / 6, shh = 0.03; // 色見本
 const panel = new ButtonPanel([
-  ...['knead', 'add', 'smooth'].map((m, i) => ({
+  ...['knead', 'add', 'smooth', 'paint'].map((m, i) => ({
     id: m, label: MODES[m].label, x: col(i), y: row(0), w: bw, h: bh, color: MODES[m].color,
     onPress: () => setMode(m), isActive: () => state.mode === m,
   })),
   { id: 'smaller', label: '− 小', x: col(0), y: row(1), w: bw, h: bh, onPress: () => setBrush(state.brushR - 0.003) },
   { id: 'size', label: () => `${Math.round(state.brushR * 1000)}mm`, x: col(1), y: row(1), w: bw, h: bh },
   { id: 'bigger', label: '+ 大', x: col(2), y: row(1), w: bw, h: bh, onPress: () => setBrush(state.brushR + 0.003) },
-  { id: 'undo', label: '↶ 戻す', x: col(0), y: row(2), w: bw, h: bh, onPress: undo },
-  { id: 'recenter', label: '手元へ', x: col(1), y: row(2), w: bw, h: bh, onPress: recenter },
-  { id: 'reset', label: 'リセット', x: col(2), y: row(2), w: bw, h: bh, onPress: resetClay },
+  { id: 'undo', label: '↶ 戻す', x: col(3), y: row(1), w: bw, h: bh, onPress: undo },
+  { id: 'recenter', label: '手元へ', x: col(0), y: row(2), w: bw, h: bh, onPress: recenter },
+  { id: 'reset', label: 'リセット', x: col(1), y: row(2), w: bw, h: bh, onPress: resetClay },
+  ...PALETTE.map((c, i) => ({
+    id: `color${i}`, label: '', swatch: true, color: c,
+    x: -PANEL_W / 2 + swatchW / 2 + (i % 6) * (swatchW + gap), y: row(3) + bh / 2 - shh / 2 - Math.floor(i / 6) * (shh + gap),
+    w: swatchW, h: shh, onPress: () => setColor(c), isActive: () => state.color === c,
+  })),
 ], {
-  title: ['手のひらで触れる: こねる / なでる', '盛る: 人差し指の先から足す', 'つまむ: 引っ張る / 空中: 移動・両手で回転'],
+  title: ['手のひらで触れる: こねる / なでる', '盛る・塗る: 人差し指の先で (下の色を使う)', 'つまむ: 引っ張る / 空中: 移動・両手で回転'],
 });
 panel.group.position.set(-0.3, 0.02, 0.08);
 panel.group.rotation.set(-0.3, 0.6, 0, 'YXZ');
@@ -765,7 +798,7 @@ let recenterPending = false;
 let xrStartT = 0;
 
 // ---- 状態表示 (画面の UI と、XR 中は目の前の文字板) ----
-const VERSION = '0.5.0';
+const VERSION = '0.6.0';
 const logLines = [];
 function log(msg) {
   const line = `${new Date().toLocaleTimeString()} ${msg}`;
@@ -798,7 +831,7 @@ const hud = (() => {
       ctx.fillStyle = '#e8eaee';
       ctx.font = '34px system-ui, sans-serif';
       ctx.textBaseline = 'top';
-      ctx.fillText(`Clay XR v${VERSION}`, 24, 16);
+      ctx.fillText(`めっちゃ美唄 Clay XR v${VERSION}`, 24, 16);
       logLines.forEach((l, i) => ctx.fillText(l, 24, 64 + i * 42));
       tex.needsUpdate = true;
     },
@@ -825,6 +858,7 @@ function applyEnvironment() {
   propPanel.group.visible = !!xrMode;
   bounds.visible = !xrMode;
   desktopCursor.visible = false;
+  post.onXRChange();
 }
 
 async function startXR(mode) {
@@ -903,6 +937,27 @@ function setMode(m) {
   state.mode = m;
   for (const b of ui.modes.children) b.classList.toggle('active', b.dataset.mode === m);
 }
+
+// 画面: 色見本と、好きな色を選ぶ入力
+const paletteEl = document.getElementById('palette');
+for (const c of PALETTE) {
+  const b = document.createElement('button');
+  b.className = 'swatch';
+  b.dataset.color = c;
+  b.style.background = c;
+  b.title = c;
+  b.onclick = () => setColor(c);
+  paletteEl.appendChild(b);
+}
+const colorPick = document.getElementById('colorPick');
+colorPick.oninput = () => setColor(colorPick.value);
+function setColor(c) {
+  state.color = c.toLowerCase();
+  for (const b of paletteEl.children) b.classList.toggle('active', b.dataset.color === state.color);
+  colorPick.value = state.color;
+  // 色を選んだら、盛る以外は「塗る」にする
+  if (state.mode !== 'add' && state.mode !== 'paint') setMode('paint');
+}
 function setBrush(r) {
   state.brushR = THREE.MathUtils.clamp(r, 0.006, 0.04);
   ui.size.value = Math.round(state.brushR * 1000);
@@ -916,6 +971,9 @@ document.getElementById('vr').onclick = () => startXR('immersive-vr');
 document.getElementById('ar').onclick = () => startXR('immersive-ar');
 setMode(state.mode);
 setBrush(state.brushR);
+for (const b of paletteEl.children) b.classList.toggle('active', b.dataset.color === state.color);
+colorPick.value = state.color;
+document.querySelector('#ui .fold').onclick = () => document.getElementById('ui').classList.toggle('collapsed');
 
 // 画面: 粘土の性質のスライダー
 const paramInputs = new Map();
@@ -944,8 +1002,9 @@ loadParams();
 syncParamInputs();
 
 addEventListener('keydown', (e) => {
+  if (e.target.closest?.('input, textarea, select')) return; // 名前などを入力中
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); return; }
-  const keys = { 1: 'knead', 2: 'add', 3: 'smooth', 4: 'pull' };
+  const keys = { 1: 'knead', 2: 'add', 3: 'smooth', 4: 'pull', 5: 'paint' };
   if (keys[e.key]) setMode(keys[e.key]);
   if (e.key === '[') setBrush(state.brushR - 0.002);
   if (e.key === ']') setBrush(state.brushR + 0.002);
@@ -971,16 +1030,50 @@ async function checkXR() {
 }
 checkXR();
 
+// 粘土を 1 つのメッシュ (頂点カラー付き) の GLB にする。
+// 原点は底面の中心。配置 (Transform) はこの点の位置・粘土の回転・大きさになる
+async function exportClay() {
+  clay.updateMatrixWorld();
+  const geos = [];
+  for (const m of chunkMeshes.values()) if (m.visible && m.geometry.index) geos.push(m.geometry);
+  if (!geos.length) throw new Error('粘土がありません');
+  const merged = mergeGeometries(geos, false);
+  merged.computeBoundingBox();
+  const bb = merged.boundingBox;
+  const cx = (bb.min.x + bb.max.x) / 2, cz = (bb.min.z + bb.max.z) / 2, by = bb.min.y;
+  merged.translate(-cx, -by, -cz);
+  const mesh = new THREE.Mesh(merged, new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.78, metalness: 0 }));
+  mesh.name = 'clay';
+  const bytes = await new GLTFExporter().parseAsync(mesh, { binary: true });
+  merged.dispose();
+  mesh.material.dispose();
+  return {
+    bytes,
+    anchor: clay.localToWorld(new THREE.Vector3(cx, by, cz)),
+    quaternion: clay.quaternion.clone(),
+    scale: clay.scale.x,
+  };
+}
+
 function exportGLB() {
-  bounds.visible = false;
-  new GLTFExporter().parse(clay, (glb) => {
-    bounds.visible = !xrMode;
-    const url = URL.createObjectURL(new Blob([glb], { type: 'model/gltf-binary' }));
+  exportClay().then(({ bytes }) => {
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'model/gltf-binary' }));
     const a = Object.assign(document.createElement('a'), { href: url, download: 'clay.glb' });
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }, (err) => { bounds.visible = !xrMode; alert(`書き出しに失敗しました: ${err}`); }, { binary: true, onlyVisible: true });
+  }, (err) => alert(`書き出しに失敗しました: ${err.message || err}`));
 }
+
+// ================= 投稿 (めっちゃ美唄) =================
+const post = initPost({
+  renderer, workspace, ButtonPanel,
+  exportClay,
+  snapshot: () => field.snapshot(),
+  restore: restoreSnapshot,
+  newClay: resetClay,
+  log,
+  xrMode: () => xrMode,
+});
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
@@ -1007,6 +1100,7 @@ renderer.setAnimationLoop((tms, frame) => {
     } else {
       controls.update();
     }
+    post.update();
     remeshDirty();
   } catch (err) {
     const msg = `${err.name}: ${err.message}`;
@@ -1018,4 +1112,4 @@ renderer.setAnimationLoop((tms, frame) => {
 document.getElementById('ver').textContent = `v${VERSION}`;
 
 // デバッグ用
-window.__clay = { field, clay, state, setMode, setBrush, undo, applyTool, chunkMeshes, camera, controls, hands, updateXR, panel, workspace, undoStack, recenterFrom, tryRecenterFromFrame, log, hud, LIMIT, VISC, PARAMS, propPanel };
+window.__clay = { field, clay, state, setMode, setBrush, setColor, undo, applyTool, chunkMeshes, camera, controls, hands, updateXR, panel, workspace, undoStack, recenterFrom, tryRecenterFromFrame, log, hud, LIMIT, VISC, PARAMS, propPanel, exportClay, post };
