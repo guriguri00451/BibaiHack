@@ -6,11 +6,16 @@ import { buildCubeGlb } from './cube-glb.js';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const TICK_HZ = 15;
-const ROUND = 1;
+// PHASE_CYCLE=1 でフェーズを巡回させる（waiting→preparing→playing→finished→round++）。既定は playing 固定
+const IS_PHASE_CYCLE = process.env.PHASE_CYCLE === '1';
+const PHASES = [['waiting', 5], ['preparing', 5], ['playing', 20], ['finished', 8]];
 const COLORS = { 'mock/red.glb': [1, 0.2, 0.3], 'mock/green.glb': [0.3, 0.9, 0.4], 'mock/blue.glb': [0.2, 0.6, 1] };
+const PARTICIPANTS = ['ケイ', 'ドロ'];
 const OBJECTS = Object.keys(COLORS).map((assetKey, i) => ({ objectId: `obj-${i + 1}`, assetKey, phase: (i * 2 * Math.PI) / 3 }));
 
 let seq = 0;
+let round = 1;
+let phase = 'playing';
 
 const identityRotation = [0, 0, 0, 1];
 const transformAt = (object, timeSeconds) => {
@@ -50,19 +55,42 @@ wss.on('connection', (socket, request) => {
     console.log(`auth ok session=${message.payload?.sessionId}`);
     const now = Date.now() / 1000;
     send(socket, 'session.snapshot', {
-      status: 'playing',
-      objects: OBJECTS.map((o) => ({ objectId: o.objectId, assetKey: o.assetKey, assetUrl: assetUrl(o.assetKey), transform: transformAt(o, now) })),
+      status: phase,
+      participants: PARTICIPANTS,
+      // preparing 中は配置情報を返さない（ドロの位置を漏らさない）
+      objects: phase !== 'playing' ? [] : OBJECTS.map((o) => ({ objectId: o.objectId, assetKey: o.assetKey, assetUrl: assetUrl(o.assetKey), transform: transformAt(o, now) })),
     });
   });
   socket.on('close', () => authenticated.delete(socket));
 });
 
 function send(socket, type, payload) {
-  socket.send(JSON.stringify({ type, round: ROUND, seq, timestamp: Date.now(), payload }));
+  socket.send(JSON.stringify({ type, round, seq, timestamp: Date.now(), payload }));
 }
 
+function broadcastPhase() {
+  seq += 1;
+  const payload = { status: phase, participants: PARTICIPANTS };
+  if (phase === 'finished') payload.result = { captured: round % 2 === 1, score: 100 * round };
+  for (const socket of authenticated) send(socket, 'session.phase_changed', payload);
+  console.log(`phase=${phase} round=${round}`);
+}
+
+async function runPhaseCycle() {
+  for (;;) {
+    for (const [name, seconds] of PHASES) {
+      phase = name;
+      broadcastPhase();
+      await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+    }
+    round += 1;
+    seq = 0;
+  }
+}
+if (IS_PHASE_CYCLE) runPhaseCycle();
+
 setInterval(() => {
-  if (authenticated.size === 0) return;
+  if (authenticated.size === 0 || phase !== 'playing') return;
   const now = Date.now() / 1000;
   for (const object of OBJECTS) {
     seq += 1;

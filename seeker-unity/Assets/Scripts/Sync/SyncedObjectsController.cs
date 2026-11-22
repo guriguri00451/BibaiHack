@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Seeker.Ar;
 using UnityEngine;
@@ -11,13 +12,19 @@ namespace Seeker.Sync
     public sealed class SyncedObjectsController : MonoBehaviour
     {
         private readonly SyncedObjectStore store = new SyncedObjectStore();
+        private readonly GameSessionState session = new GameSessionState();
         private readonly Dictionary<string, SyncedObjectView> views = new Dictionary<string, SyncedObjectView>();
         private CoordinateAdapter adapter;
         private SeekerWsClient client;
         private GlbCache glbCache;
 
         /// <summary>サーバーに拒否されて同期を諦めたとき（再接続しても直らない）。</summary>
-        public event System.Action Rejected;
+        public event Action Rejected;
+
+        public GameSessionState Session => session;
+
+        /// <summary>フェーズ・ラウンド・参加者・結果のいずれかが変わったとき。</summary>
+        public event Action SessionChanged;
 
         /// <summary>
         /// 接続情報が揃ってから呼ぶ（呼ぶまでは接続しない）。1インスタンスにつき1回だけ。
@@ -38,7 +45,13 @@ namespace Seeker.Sync
         {
             client?.DispatchMessages();
             if (adapter == null) return;
-            foreach (var view in views.Values) view.Render(adapter, Time.deltaTime);
+            // preparing 中は配置情報が来ない前提で何も描かない。playing 以外はオブジェクトを隠す
+            var isPlaying = session.Phase == GamePhase.Playing;
+            foreach (var view in views.Values)
+            {
+                if (isPlaying) view.Render(adapter, Time.deltaTime);
+                else if (view.gameObject.activeSelf) view.gameObject.SetActive(false);
+            }
         }
 
         private void OnDestroy()
@@ -52,7 +65,9 @@ namespace Seeker.Sync
             IReadOnlyList<SyncChange> changes;
             try
             {
-                changes = store.Apply(ServerMessage.Parse(json));
+                var message = ServerMessage.Parse(json);
+                if (session.Apply(message)) SessionChanged?.Invoke();
+                changes = store.Apply(message);
             }
             catch (System.Exception exception) when (exception is System.FormatException || exception is Newtonsoft.Json.JsonException)
             {
