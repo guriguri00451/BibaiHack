@@ -1,0 +1,9 @@
+{
+    "name": "SeekerSync",
+    "rootNamespace": "Seeker.Sync",
+    "references": ["SeekerAr", "Unity.Newtonsoft.Json", "endel.nativewebsocket", "glTFast"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "autoReferenced": true
+}

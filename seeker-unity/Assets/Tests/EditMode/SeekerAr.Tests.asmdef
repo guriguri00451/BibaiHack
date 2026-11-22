@@ -1,7 +1,7 @@
 {
     "name": "SeekerAr.Tests",
     "rootNamespace": "Seeker.Ar.Tests",
-    "references": ["SeekerAr", "UnityEngine.TestRunner", "UnityEditor.TestRunner"],
+    "references": ["SeekerAr", "SeekerSync", "UnityEngine.TestRunner", "UnityEditor.TestRunner"],
     "includePlatforms": ["Editor"],
     "excludePlatforms": [],
     "overrideReferences": true,

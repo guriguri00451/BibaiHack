@@ -1,4 +1,5 @@
 using Seeker.Ar;
+using Seeker.Sync;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.XR.ARFoundation;
@@ -14,6 +15,7 @@ namespace Seeker.App
     public sealed class SeekerArController : MonoBehaviour
     {
         [SerializeField] private ARTrackedImageManager imageManager;
+        [SerializeField] private SyncedObjectsController syncedObjects;
         [SerializeField] private string mapId = "bibai-museum";
         // 空ならモック(StreamingAssets/mock)を使う。API 実装後に https://host/v1 を入れる
         [SerializeField] private string apiBaseUrl = "";
@@ -26,6 +28,9 @@ namespace Seeker.App
         {
             BuildUi();
             mapPresenter = new MapPresenter(transform);
+            // シーンに置いていなければ実行時に足す（接続先は SyncedObjectsController の既定値 = モック）
+            if (syncedObjects == null) syncedObjects = gameObject.AddComponent<SyncedObjectsController>();
+            syncedObjects.Configure(adapter);
         }
 
         private async void Start()
