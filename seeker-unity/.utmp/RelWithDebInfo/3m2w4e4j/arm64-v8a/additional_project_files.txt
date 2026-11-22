@@ -1,0 +1,17 @@
+/Users/soma/orca/workspaces/BibaiHack/feat-seeker-ar-qr-adapter/seeker-unity/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/GameActivity/GAToUnityCallbacks.h
+/Users/soma/orca/workspaces/BibaiHack/feat-seeker-ar-qr-adapter/seeker-unity/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/GameActivity/MacroEnd.h
+/Users/soma/orca/workspaces/BibaiHack/feat-seeker-ar-qr-adapter/seeker-unity/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/GameActivity/MacroHeaderBegin.h
+/Users/soma/orca/workspaces/BibaiHack/feat-seeker-ar-qr-adapter/seeker-unity/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/GameActivity/MacroSourceBegin.h
+/Users/soma/orca/workspaces/BibaiHack/feat-seeker-ar-qr-adapter/seeker-unity/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/GameActivity/UGAApplication.h
+/Users/soma/orca/workspaces/BibaiHack/feat-seeker-ar-qr-adapter/seeker-unity/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/GameActivity/UGAConfiguration.h
+/Users/soma/orca/workspaces/BibaiHack/feat-seeker-ar-qr-adapter/seeker-unity/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/GameActivity/UGADebug.h
+/Users/soma/orca/workspaces/BibaiHack/feat-seeker-ar-qr-adapter/seeker-unity/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/GameActivity/UGAEvents.h
+/Users/soma/orca/workspaces/BibaiHack/feat-seeker-ar-qr-adapter/seeker-unity/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/GameActivity/UGAInput.h
+/Users/soma/orca/workspaces/BibaiHack/feat-seeker-ar-qr-adapter/seeker-unity/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/GameActivity/UGASoftKeyboard.h
+/Users/soma/orca/workspaces/BibaiHack/feat-seeker-ar-qr-adapter/seeker-unity/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/GameActivity/UGASoftKeyboardCallbacks.h
+/Users/soma/orca/workspaces/BibaiHack/feat-seeker-ar-qr-adapter/seeker-unity/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/GameActivity/UGATypes.h
+/Users/soma/orca/workspaces/BibaiHack/feat-seeker-ar-qr-adapter/seeker-unity/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/GameActivity/UGAVersion.h
+/Users/soma/orca/workspaces/BibaiHack/feat-seeker-ar-qr-adapter/seeker-unity/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/GameActivity/UnityToGACallbacks.h
+/Users/soma/orca/workspaces/BibaiHack/feat-seeker-ar-qr-adapter/seeker-unity/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/GameActivity/UnityToGAConfigurationCallbacks.h
+/Users/soma/orca/workspaces/BibaiHack/feat-seeker-ar-qr-adapter/seeker-unity/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/GameActivity/UnityToGAKeyEventCallbacks.h
+/Users/soma/orca/workspaces/BibaiHack/feat-seeker-ar-qr-adapter/seeker-unity/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/GameActivity/UnityToGAMotionEventCallbacks.h
