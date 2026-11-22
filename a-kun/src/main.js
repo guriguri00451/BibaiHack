@@ -2,16 +2,17 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ClayField } from './sdf.js?v=0.8.3';
-import { ButtonPanel } from './panel.js?v=0.8.3';
-import { initPost } from './post/ui.js?v=0.8.3';
+import { ClayField } from './sdf.js?v=0.9.0';
+import { ButtonPanel } from './panel.js?v=0.9.0';
+import { initPost } from './post/ui.js?v=0.9.0';
 
 // ================= 設定 =================
-// 立方体の大きさ: 作る粘土 (一辺 14cm) を 2.45 倍にして、一辺 約 34cm の立方体にする。
+// 粘土の大きさ: 最初の球 (半径 8.65cm。一辺 14cm の立方体と同じ体積) を 2.45 倍にして、直径 約 42cm にする。
 // 格子 (80³) は同じなので、1 マスは約 1.2cm になる
 const CUBE_SCALE = 2.45;
-const CUBE_HALF = 0.07 * CUBE_SCALE;     // 立方体の半分の長さ (m)
-const PANEL_Z = CUBE_HALF + 0.06;        // パネルを置く位置: 立方体の手前の面から 6cm 手前
+const START_R = 0.0865;                  // 最初の球の半径 (粘土の座標, m)
+const CUBE_HALF = START_R * CUBE_SCALE;  // 最初の球の半径 (m)
+const PANEL_Z = CUBE_HALF + 0.06;        // パネルを置く位置: 球の手前から 6cm 手前
 const CLAY_HOME = new THREE.Vector3(0, CUBE_HALF + 0.05, -0.6); // 画面の初期位置 (床の近く)
 // さわる: XR では手の押し込みの深さで、軽く触れる=なでる / 深く押す=こねる に自動で切り替わる。
 //   画面では、ドラッグ=こねる / Shift+ドラッグ=なでる
@@ -91,7 +92,7 @@ clay.scale.setScalar(CUBE_SCALE);
 scene.add(clay);
 
 const field = new ClayField({ N: 80, size: 0.4 });
-field.resetCube(0.07, 0.01);
+field.resetSphere(START_R);
 
 // 色は頂点カラー (格子点の色を補間したもの)
 const clayMat = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.78, metalness: 0 });
@@ -174,10 +175,10 @@ function restoreSnapshot(snap) {
   pushUndo();
   field.restore(snap);
 }
-// 立方体に戻して作業台の上に置き直す (「新しく作る」も同じ)
+// 球に戻して作業台の上に置き直す (「新しく作る」も同じ)
 function resetClay() {
   pushUndo();
-  field.resetCube(0.07, 0.01);
+  field.resetSphere(START_R);
   clay.position.copy(workspace.position);
   clay.quaternion.copy(workspace.quaternion);
   clay.scale.setScalar(CUBE_SCALE);
@@ -937,7 +938,7 @@ workspace.add(propPanel.group);
 function recenter() {
   recenterFrom(camera.position, camera.quaternion);
 }
-const RECENTER = { forward: 0.45, drop: 0 }; // forward: 立方体の手前の面までの距離 (m)。drop = 0: 立方体の中心が目と同じ高さ // m。粘土の中心の位置 (目から前へ・下へ)
+const RECENTER = { forward: 0.45, drop: 0 }; // forward: 粘土の手前の面までの距離 (m)。drop = 0: 粘土の中心が目と同じ高さ
 function recenterFrom(headPos, headQuat) {
   const head = new THREE.Vector3().copy(headPos);
   const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(headQuat);
@@ -945,7 +946,7 @@ function recenterFrom(headPos, headQuat) {
   if (fwd.lengthSq() < 1e-4) fwd.set(0, 0, -1);
   fwd.normalize();
   // 頭 (目) の高さが基準: 水平の視線方向に FORWARD、目から DROP だけ下に置く
-  workspace.position.copy(head).addScaledVector(fwd, RECENTER.forward + 0.07 * clay.scale.x).add(new THREE.Vector3(0, -RECENTER.drop, 0));
+  workspace.position.copy(head).addScaledVector(fwd, RECENTER.forward + START_R * clay.scale.x).add(new THREE.Vector3(0, -RECENTER.drop, 0));
   workspace.rotation.set(0, Math.atan2(-fwd.x, -fwd.z), 0);
   workspace.updateMatrixWorld();
   clay.position.copy(workspace.position);
@@ -961,7 +962,7 @@ let recenterPending = false;
 let xrStartT = 0;
 
 // ---- 状態表示 (画面の UI と、XR 中は目の前の文字板) ----
-const VERSION = '0.8.3';
+const VERSION = '0.9.0';
 const logLines = [];
 function log(msg) {
   const line = `${new Date().toLocaleTimeString()} ${msg}`;
@@ -1189,7 +1190,7 @@ async function checkXR() {
 checkXR();
 
 // 投稿するモデルの体積 (m³)。作ったモデルは、この体積になるように大きさをそろえて投稿する。
-// 初期の立方体 (一辺 14cm、角を丸めたもの) がほぼ等倍になる値
+// 最初の球 (一辺 14cm の立方体と同じ体積) がほぼ等倍になる値
 const POST_VOLUME = 0.0027;
 const POST_FACTOR = [0.2, 5]; // 補正の倍率の範囲 (小さすぎる・大きすぎる粘土でも極端にならないように)
 

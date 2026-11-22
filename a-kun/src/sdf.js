@@ -53,6 +53,22 @@ export class ClayField {
 
   // ---------- 初期形状 ----------
 
+  // 球 (半径 r m、格子の中心)
+  resetSphere(r = 0.0865, color = this.baseColor) {
+    const { N, h, half, d } = this;
+    this.fillColor(color);
+    for (let z = 0; z < N; z++) {
+      for (let y = 0; y < N; y++) {
+        for (let x = 0; x < N; x++) {
+          const dist = (Math.hypot(-half + x * h, -half + y * h, -half + z * h) - r) / h;
+          const border = x === 0 || y === 0 || z === 0 || x === N - 1 || y === N - 1 || z === N - 1;
+          d[x + N * (y + N * z)] = border ? Math.max(dist, 1) : dist;
+        }
+      }
+    }
+    this.markAllDirty();
+  }
+
   resetCube(b = 0.07, r = 0.01, color = this.baseColor) {
     const { N, h, half, d } = this;
     this.fillColor(color);
