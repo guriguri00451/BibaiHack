@@ -1,0 +1,9 @@
+{
+    "name": "SeekerAr",
+    "rootNamespace": "Seeker.Ar",
+    "references": [],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "autoReferenced": true
+}

@@ -10,7 +10,8 @@
       align-items: center; justify-content: center; gap: 12px; pointer-events: none; }
     #overlay > * { pointer-events: auto; }
     #start { font-size: 18px; padding: 14px 28px; border-radius: 8px; border: 0; }
-    #start[hidden] { display: none; }
+    #rescan { font-size: 14px; padding: 8px 16px; border-radius: 8px; border: 0; }
+    #start[hidden], #rescan[hidden] { display: none; }
     #status { background: rgba(0,0,0,.6); padding: 6px 12px; border-radius: 6px; }
   </style>
 </head>
@@ -18,6 +19,7 @@
   <div id="overlay">
     <div id="status">確認中…</div>
     <button id="start" hidden>ARを開始</button>
+    <button id="rescan" hidden>原点を再スキャン</button>
   </div>
   <script type="module" src="/src/main.js"></script>
 </body>
