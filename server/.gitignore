@@ -1,0 +1,7 @@
+node_modules/
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+# PGlite のローカルデータ（DATABASE_URL を指定しないときの保存先）
+.pglite/
