@@ -19,13 +19,13 @@ namespace Seeker.Editor
             "Shader Graphs/glTF-pbrSpecularGlossiness",
         };
 
-        /// <summary>開発用。ローカルのモックサーバー（http）に繋ぐため平文HTTPを許可する。</summary>
-        public static void Build() => BuildApk(InsecureHttpOption.AlwaysAllowed);
+        /// <summary>開発用（Development ビルド）。ローカルサーバー（http）に繋ぐため平文HTTPを許可し、dev-connection.json を読む。</summary>
+        public static void Build() => BuildApk(InsecureHttpOption.AlwaysAllowed, BuildOptions.Development);
 
         /// <summary>リリース用。平文HTTPを禁止するので、https / wss の実サーバーにしか繋がらない。</summary>
-        public static void BuildRelease() => BuildApk(InsecureHttpOption.NotAllowed);
+        public static void BuildRelease() => BuildApk(InsecureHttpOption.NotAllowed, BuildOptions.None);
 
-        private static void BuildApk(InsecureHttpOption insecureHttpOption)
+        private static void BuildApk(InsecureHttpOption insecureHttpOption, BuildOptions buildOptions)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(OutputPath));
             EnsureGltfastShadersIncluded();
@@ -36,7 +36,7 @@ namespace Seeker.Editor
                 scenes = new[] { "Assets/Scenes/SeekerAr.unity" },
                 locationPathName = OutputPath,
                 target = BuildTarget.Android,
-                options = BuildOptions.None,
+                options = buildOptions,
             });
             if (report.summary.result != BuildResult.Succeeded)
                 throw new Exception($"Android build failed: {report.summary.result} ({report.summary.totalErrors} errors)");

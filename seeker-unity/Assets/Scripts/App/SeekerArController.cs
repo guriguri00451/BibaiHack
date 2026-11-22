@@ -38,6 +38,7 @@ namespace Seeker.App
 
         private async void Start()
         {
+            if (DevConnectionFile.TryRead(out var devConnection)) StartSync(devConnection);
             try
             {
                 var definition = await new MapService(apiBaseUrl).FetchAsync(mapId);
