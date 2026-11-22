@@ -1,11 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ClayField } from './sdf.js?v=0.6.9';
-import { ButtonPanel } from './panel.js?v=0.6.9';
-import { initPost } from './post/ui.js?v=0.6.9';
+import { ClayField } from './sdf.js?v=0.7.1';
+import { ButtonPanel } from './panel.js?v=0.7.1';
+import { initPost } from './post/ui.js?v=0.7.1';
 
 // ================= 設定 =================
 const CLAY_HOME = new THREE.Vector3(0, 1.1, -0.45);
@@ -376,17 +375,40 @@ const LIMIT = {
   release: 10,    // 離したとき見えている手が本物の手に戻る速さ (1/s)
 };
 
-const handFactory = new XRHandModelFactory();
+// 見えている手: 骨ごとのカプセル (当たり判定と同じ形) を半透明で描く。
+// 手の追跡が乱れても潰れない。表面で止まる手 (jpos) をそのまま描く
+const HAND_LOOK = {
+  opacity: 0.5,
+  stroke: new THREE.Color(0xe0c9bf), // なでている間: ほんの少しだけ涼しい肌色
+  knead: new THREE.Color(0xe8bba8),  // こねている間: ほんの少しだけ赤みのある肌色
+};
+const _cylGeo = new THREE.CylinderGeometry(1, 1, 1, 16, 1, true);
+const _sphGeo = new THREE.SphereGeometry(1, 16, 12);
+function makeHandLook() {
+  const nB = BONES.length;
+  // 重なった所が濃くならないように、まず深さだけを書き (色なし)、そのあと手前の面だけ半透明で塗る
+  const depthMat = new THREE.MeshBasicMaterial({ colorWrite: false });
+  const colorMat = new THREE.MeshStandardMaterial({
+    color: 0xe3c4b3, roughness: 0.55, transparent: true, opacity: HAND_LOOK.opacity, depthWrite: false,
+  });
+  const mk = (geo, n) => {
+    const a = new THREE.InstancedMesh(geo, depthMat, n);
+    const b = new THREE.InstancedMesh(geo, colorMat, n);
+    b.instanceMatrix = a.instanceMatrix; // 位置は共有する
+    a.frustumCulled = b.frustumCulled = false;
+    a.renderOrder = 10; b.renderOrder = 20;
+    a.count = b.count = 0;
+    scene.add(a, b);
+    return [a, b];
+  };
+  return { cyl: mk(_cylGeo, nB), sph: mk(_sphGeo, nB * 2), colorMat, k: 0, w: 0 };
+}
 const hands = [0, 1].map((i) => {
   const hand = renderer.xr.getHand(i);
-  // 見えている手 (表面で止まる) と、本物の手の位置を薄く示すゴースト
-  const model = handFactory.createHandModel(hand, 'mesh');
-  const ghost = handFactory.createHandModel(hand, 'mesh');
-  hand.add(model, ghost);
   scene.add(hand);
   const hs = {
-    hand, model, ghost, connected: false, handedness: null,
-    offset: new THREE.Vector3(), n: new THREE.Vector3(0, 1, 0), s: 0, excess: 0, styled: false,
+    hand, look: makeHandLook(), connected: false, handedness: null,
+    offset: new THREE.Vector3(), n: new THREE.Vector3(0, 1, 0), s: 0, excess: 0,
     jreal: new Map(JOINT_NAMES.map((n) => [n, new THREE.Vector3()])),
     tipF: new OneEuro3(), pinchF: new OneEuro3(),
     tip: new THREE.Vector3(), pinchPos: new THREE.Vector3(),
@@ -537,28 +559,41 @@ function updateTouchLimit(hs, dt, active) {
 }
 
 // 手のモデルの見た目: 見えている手はずらした位置に、ゴーストは本物の位置に
-// 手は常に不透明で見せる
-const handMat = new THREE.MeshStandardMaterial({ color: 0xe3c4b3, roughness: 0.55 });
-const ghostMat = new THREE.MeshBasicMaterial({ color: 0x9fd3ff, transparent: true, opacity: 0, depthTest: false, depthWrite: false });
+const HAND_BASE = new THREE.Color(0xe3c4b3); // ふだんの色
+const _vm = new THREE.Matrix4(), _vp = new THREE.Vector3(), _vq = new THREE.Quaternion(), _vs = new THREE.Vector3();
+const _vd = new THREE.Vector3(), _vup = new THREE.Vector3(0, 1, 0), _vid = new THREE.Quaternion(), _vc = new THREE.Color();
 function updateHandVisuals(hs) {
-  if (!hs.styled) {
-    const m = hs.model.getObjectByProperty('type', 'SkinnedMesh');
-    const g = hs.ghost.getObjectByProperty('type', 'SkinnedMesh');
-    if (m && g) {
-      m.material = handMat.clone();
-      g.material = ghostMat.clone();
-      g.renderOrder = 50;
-      hs.styled = true;
+  const L = hs.look;
+  let n = 0, ns = 0;
+  if (hs.connected && hs.valid.size) {
+    for (const [a, b, rFixed] of BONES) {
+      if (!hs.valid.has(a) || !hs.valid.has(b)) continue;
+      let r = rFixed;
+      if (!r) {
+        const ra = hs.hand.joints[a]?.jointRadius, rb = hs.hand.joints[b]?.jointRadius;
+        r = ra && rb ? (ra + rb) / 2 : FINGER_R;
+      }
+      const pa = hs.jpos.get(a), pb = hs.jpos.get(b);
+      _vd.subVectors(pb, pa);
+      const len = _vd.length();
+      if (len > 1e-5) _vq.setFromUnitVectors(_vup, _vd.multiplyScalar(1 / len)); else _vq.copy(_vid);
+      _vp.addVectors(pa, pb).multiplyScalar(0.5);
+      L.cyl[0].setMatrixAt(n++, _vm.compose(_vp, _vq, _vs.set(r, Math.max(len, 1e-4), r)));
+      _vs.setScalar(r * 0.985); // 円柱と同じ大きさだと表面が重なってちらつくので、ほんの少し小さくする
+      L.sph[0].setMatrixAt(ns++, _vm.compose(pa, _vid, _vs));
+      L.sph[0].setMatrixAt(ns++, _vm.compose(pb, _vid, _vs));
     }
   }
-  const off = hs.offset.length();
-  hs.model.position.copy(hs.offset);
-  const ar = xrMode === 'immersive-ar';
-  hs.model.visible = true;
-  hs.ghost.visible = !ar && off > 0.004;
-  if (hs.styled) {
-    hs.ghost.getObjectByProperty('type', 'SkinnedMesh').material.opacity = THREE.MathUtils.smoothstep(off, 0.004, 0.02) * 0.3;
-  }
+  L.cyl[0].count = L.cyl[1].count = n;
+  L.sph[0].count = L.sph[1].count = ns;
+  L.cyl[0].instanceMatrix.needsUpdate = true;
+  L.sph[0].instanceMatrix.needsUpdate = true;
+  // さわり方で、手の色をほんの少し変える: なでる = 涼しい肌色 / こねる = 赤みのある肌色 (ふだんは元の肌色)
+  const touching = state.mode === 'touch' && (hs.contact || hs.offset.lengthSq() > 1e-8);
+  L.w += ((touching ? 1 : 0) - L.w) * 0.2;
+  L.k += ((hs.kneadK || 0) - L.k) * 0.25;
+  _vc.copy(HAND_LOOK.stroke).lerp(HAND_LOOK.knead, L.k);
+  L.colorMat.color.copy(HAND_BASE).lerp(_vc, L.w);
 }
 function rememberJoints(hs) {
   hs.prevValid.clear();
@@ -623,6 +658,7 @@ function handSculpt(hs, dt, t) {
   if (!caps.length) return;
   // 押し込みの深さで なでる ⇔ こねる を切り替える。k = 0: なでる / k = 1: こねる
   const k = THREE.MathUtils.smoothstep(hs.depth || 0, TOUCH.kneadFrom, TOUCH.kneadFrom + TOUCH.kneadSpan);
+  hs.kneadK = k;
   if (k > 0.02) {
     const moving = [];
     for (const c of caps) {
@@ -701,6 +737,8 @@ function updateXR(dt, t) {
     const thumbJ = hs.hand.joints['thumb-tip'];
     if (!hs.connected || !tipJ || !thumbJ || !tipJ.visible || !thumbJ.visible) {
       hs.cursor.visible = false;
+      hs.valid.clear();
+      hs.kneadK = 0;
       hideUiPointer(hs);
       hs.uiPinch = null;
       endPinch(hs);
@@ -914,7 +952,7 @@ let recenterPending = false;
 let xrStartT = 0;
 
 // ---- 状態表示 (画面の UI と、XR 中は目の前の文字板) ----
-const VERSION = '0.6.9';
+const VERSION = '0.7.1';
 const logLines = [];
 function log(msg) {
   const line = `${new Date().toLocaleTimeString()} ${msg}`;
@@ -1249,4 +1287,4 @@ renderer.setAnimationLoop((tms, frame) => {
 document.getElementById('ver').textContent = `v${VERSION}`;
 
 // デバッグ用
-window.__clay = { field, clay, state, setMode, setBrush, setColor, undo, applyTool, chunkMeshes, camera, controls, hands, updateXR, panel, workspace, undoStack, recenterFrom, tryRecenterFromFrame, log, hud, LIMIT, VISC, PARAMS, propPanel, exportClay, post };
+window.__clay = { field, clay, state, setMode, setBrush, setColor, undo, applyTool, chunkMeshes, camera, controls, hands, updateXR, panel, workspace, undoStack, recenterFrom, tryRecenterFromFrame, log, hud, LIMIT, VISC, PARAMS, propPanel, exportClay, post, updateHandVisuals };
