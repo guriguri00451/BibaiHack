@@ -10,43 +10,63 @@ namespace AKun
     //   → 「ここに隠す」(GLB を上げて、隠す場所をマップ座標の Transform にしてオブジェクトとして登録)
     //   投稿したあとも粘土はそのまま残り、直してから「更新して投稿」で新しい版を上げられる。
     //   「新しく作る」で球に戻すと、次は別のオブジェクトとして投稿される。
-    // 投稿先: 最初は「この端末内」。起動時の設定 (Intent の extra か config.json) にサーバーがあれば接続する
+    // 投稿先: 最初は「この端末内」。起動時の設定 (Intent の extra か config.json) にサーバーがあれば接続する。
+    // サーバーにつないでいるときはゲームの流れに従う:
+    //   ドロ (hider) で、準備中 (preparing) か本番 (playing) で、まだ見つかっていない間だけ投稿・更新できる。
+    //   ラウンドの最初の投稿に自動で化ける (「化ける」で別の投稿に切り替え)。ラウンドが変わると投稿の一覧は空にする。
+    //   ホストは右のゲームのパネルでフェーズを進める (期限が来たら自動でも進む)
     public class Post
     {
         public class Item
         {
             public string id; public int n, version; public byte[] bytes; public ClayField.Snapshot snapshot;
             public Vector3 spotPos; public Quaternion spotRot; // 隠した場所 (マップの root から見た位置。Unity の座標)
+            public int round;
         }
 
         readonly ClayApp app;
         IPostTarget target = new LocalTarget();
         public readonly Dictionary<string, Item> posted = new Dictionary<string, Item>();
         int counter;
-        string editingId;
+        string editingId, disguisedId;
         bool busy;
-        readonly ButtonPanel xrPanel, hidePanel;
+        int lastRound = -1;
+        readonly ButtonPanel xrPanel, hidePanel, gamePanel;
         ClayApp.ExportResult? pending; // 隠す場所を選んでいる間の、投稿する形
 
         public IPostTarget Target => target;
         public ButtonPanel Panel => xrPanel;
         public ButtonPanel HidePanel => hidePanel;
+        public ButtonPanel GamePanel => gamePanel;
         public bool Choosing => pending != null;
+        public ServerTarget Server => target as ServerTarget;
+
+        // 投稿できない理由 (できるときは null)。この端末内に投稿しているときは、いつでもできる
+        string Blocked => Server?.game.HideBlockReason();
+        Item Editing => editingId != null && posted.TryGetValue(editingId, out var it) ? it : null;
 
         public Post(ClayApp app, Transform workspace, float panelZ)
         {
             this.app = app;
-            const float bw = 0.09f, bh = 0.036f, gap = 0.006f;
+            const float bw = 0.075f, bh = 0.036f, gap = 0.006f;
             xrPanel = new ButtonPanel(workspace, "post-panel", new List<ButtonDef>
             {
-                new ButtonDef { id = "status", label = XRStatus, x = 0, y = 0, w = 2 * bw + gap, h = 0.03f },
+                new ButtonDef { id = "status", label = XRStatus, x = 0, y = 0, w = 3 * bw + 2 * gap, h = 0.03f },
                 new ButtonDef
                 {
-                    id = "post", x = -(bw + gap) / 2, y = -0.04f, w = bw, h = bh, color = "#81c784",
-                    label = () => busy ? "送信中…" : editingId != null && posted.TryGetValue(editingId, out var it) ? $"#{it.n} を更新" : "投稿する",
-                    onPress = DoPost, isEnabled = () => !busy,
+                    id = "post", x = -(bw + gap), y = -0.04f, w = bw, h = bh, color = "#81c784",
+                    label = () => busy ? "送信中…" : Blocked != null ? "投稿できません" : Editing != null ? $"#{Editing.n} を更新" : "投稿する",
+                    onPress = DoPost, isEnabled = () => !busy && Blocked == null,
                 },
-                new ButtonDef { id = "new", label = () => "新しく作る", x = (bw + gap) / 2, y = -0.04f, w = bw, h = bh, onPress = NewClay, isEnabled = () => !busy },
+                new ButtonDef
+                {
+                    id = "disguise", x = 0, y = -0.04f, w = bw, h = bh, color = "#ffb74d",
+                    label = () => Editing == null ? "化ける" : Editing.id == disguisedId ? $"#{Editing.n} に化けている" : $"#{Editing.n} に化ける",
+                    onPress = DoDisguise,
+                    isActive = () => Editing != null && Editing.id == disguisedId,
+                    isEnabled = () => !busy && Server != null && Blocked == null && Editing != null && Editing.id != disguisedId,
+                },
+                new ButtonDef { id = "new", label = () => "新しく作る", x = bw + gap, y = -0.04f, w = bw, h = bh, onPress = NewClay, isEnabled = () => !busy },
             });
             xrPanel.group.localPosition = new Vector3(0, 0.2f, -panelZ);
 
@@ -67,6 +87,79 @@ namespace AKun
             // 選んでいる間は粘土を隠すので、少し下げる (上のログの板と重ならないように)
             hidePanel.group.localPosition = new Vector3(0, 0.16f, -panelZ);
             hidePanel.Visible = false;
+
+            // ゲームのパネル (サーバーにつないでいる間だけ)。道具のパネルと左右対称に、右に置く
+            const float gw = 0.2f, gh = 0.028f;
+            gamePanel = new ButtonPanel(workspace, "game-panel", new List<ButtonDef>
+            {
+                new ButtonDef { id = "phase", label = PhaseLine, x = 0, y = 0, w = gw, h = gh },
+                new ButtonDef { id = "me", label = MeLine, x = 0, y = -(gh + gap), w = gw, h = gh },
+                new ButtonDef { id = "people", label = PeopleLine, x = 0, y = -2 * (gh + gap), w = gw, h = gh },
+                new ButtonDef
+                {
+                    id = "host", x = 0, y = -3 * (gh + gap) - 0.006f, w = gw, h = 0.04f, color = "#4fc3f7",
+                    label = HostLabel, onPress = HostAction,
+                    isEnabled = () => Server != null && Server.game.IsHost && !Server.PhaseBusy && !busy && !Choosing,
+                },
+            }, new[] { "ゲーム" });
+            gamePanel.group.localPosition = new Vector3(0.3f, 0.02f, -panelZ);
+            gamePanel.group.localRotation = Quaternion.Euler(0.3f * Mathf.Rad2Deg, 0.6f * Mathf.Rad2Deg, 0);
+            gamePanel.Visible = false;
+        }
+
+        // ---------- ゲームのパネル ----------
+        string PhaseLine()
+        {
+            var s = Server;
+            if (s == null) return "";
+            var g = s.game;
+            var rem = g.Remaining(DateTime.UtcNow);
+            string left = rem != null ? $" · 残り {(int)rem.Value / 60}:{(int)rem.Value % 60:00}" : "";
+            string conn = s.Connected ? "" : " · 切断中";
+            return $"ラウンド {g.round} · {GameState.PhaseName(g.status)}{left}{conn}";
+        }
+
+        string MeLine()
+        {
+            var g = Server?.game;
+            if (g == null) return "";
+            string caught = g.IsCaught ? " · 見つかった" : "";
+            return $"あなた: {GameState.RoleName(g.myRole)}{caught} · {g.Me?.score ?? 0} 点";
+        }
+
+        string PeopleLine()
+        {
+            var s = Server;
+            if (s == null) return "";
+            var g = s.game;
+            return $"参加 {g.players.Count} 人 (ケイ {g.Count("seeker")}) · 部屋 {ServerTarget.Short(g.sessionId)}";
+        }
+
+        string HostLabel()
+        {
+            var s = Server;
+            if (s == null) return "";
+            if (!s.game.IsHost) return "ホストが進めます";
+            if (s.PhaseBusy) return "送信中…";
+            return s.game.status switch
+            {
+                GameState.WAITING => "準備をはじめる",
+                GameState.PREPARING => "本番をはじめる",
+                GameState.PLAYING => "ラウンドを終える",
+                _ => "次のラウンドへ",
+            };
+        }
+
+        void HostAction()
+        {
+            var s = Server;
+            if (s == null || !s.game.IsHost) return;
+            switch (s.game.status)
+            {
+                case GameState.PREPARING: _ = s.Play(); break;
+                case GameState.PLAYING: _ = s.Finish(); break;
+                default: _ = s.StartRound(); break; // waiting / finished
+            }
         }
 
         string HideStatus()
@@ -77,7 +170,9 @@ namespace AKun
 
         string XRStatus()
         {
-            string e = editingId != null && posted.TryGetValue(editingId, out var it) ? $" · #{it.n} を編集中" : "";
+            string b = Blocked;
+            if (b != null) return $"{b} · {target.Label}";
+            string e = Editing != null ? $" · #{Editing.n} を編集中" : "";
             return $"投稿 {posted.Count} 件 · {target.Label}{e}";
         }
 
@@ -89,6 +184,7 @@ namespace AKun
         async void DoPost()
         {
             if (busy) return;
+            if (Blocked != null) { app.Log($"今は投稿できません: {Blocked}"); return; }
             busy = true;
             try
             {
@@ -115,8 +211,10 @@ namespace AKun
         async void ConfirmHide()
         {
             if (busy || pending == null || !app.map.HasSpot) return;
+            if (Blocked != null) { app.Log($"今は投稿できません: {Blocked}"); EndChoosing(); return; }
             busy = true;
             var ex = pending.Value;
+            int round = Server?.game.round ?? 0;
             try
             {
                 string assetUrl = await target.UploadAsset(ex.bytes);
@@ -133,16 +231,24 @@ namespace AKun
                 else
                 {
                     string objectId = await target.CreateObject(assetUrl, transform);
+                    if ((Server?.game.round ?? 0) != round) throw new Exception("送っている間にラウンドが変わりました");
                     var it = new Item
                     {
                         id = objectId, n = ++counter, version = 1, bytes = ex.bytes, snapshot = app.field.TakeSnapshot(),
-                        spotPos = app.map.SpotPosition, spotRot = app.map.SpotRotation,
+                        spotPos = app.map.SpotPosition, spotRot = app.map.SpotRotation, round = round,
                     };
                     posted[objectId] = it;
                     editingId = objectId;
                     string path = Save(it);
                     app.Log($"#{counter} を投稿して隠しました ({Kb(ex.bytes.Length)}{SizeNote(ex)})");
                     Debug.Log($"[clay] 保存: {path} transform={MiniJson.Write(transform)}");
+                    // ラウンドの最初の投稿には、そのまま化ける (ケイに見つかるとドロが捕まるのはこのオブジェクト)
+                    if (Server != null && disguisedId == null)
+                    {
+                        await target.Disguise(objectId);
+                        disguisedId = objectId;
+                        app.Log($"#{it.n} に化けました");
+                    }
                 }
                 EndChoosing();
             }
@@ -154,6 +260,22 @@ namespace AKun
             {
                 busy = false;
             }
+        }
+
+        // 「化ける」: 編集中の投稿に化ける (前に化けていた投稿は普通のオブジェクトに戻る)
+        async void DoDisguise()
+        {
+            var it = Editing;
+            if (busy || it == null || Server == null || Blocked != null || it.id == disguisedId) return;
+            busy = true;
+            try
+            {
+                await target.Disguise(it.id);
+                disguisedId = it.id;
+                app.Log($"#{it.n} に化けました");
+            }
+            catch (Exception err) { app.Log($"化けられませんでした: {err.Message}"); }
+            finally { busy = false; }
         }
 
         void CancelHide()
@@ -192,24 +314,24 @@ namespace AKun
         }
 
         // ---------- サーバー ----------
-        public async void Connect(string server, string code, string name)
+        // room: 入るセッションの ID。空なら部屋を作ってホストになる (ID はログと files/session.txt に出す)
+        public async void Connect(string server, string room, string name, string mapId, double preparingSeconds, double playingSeconds)
         {
             busy = true;
+            ServerTarget t = null;
             try
             {
-                var t = new ServerTarget(server.Trim());
-                await t.Join(code.Trim().ToUpperInvariant(), name);
-                t.onClose = () =>
-                {
-                    if (target != t) return;
-                    SwitchTarget(new LocalTarget());
-                    app.Log("サーバーとの接続が切れました。投稿先をこの端末内に戻しました");
-                };
+                t = new ServerTarget(server.Trim(), app.Log) { preparingSeconds = preparingSeconds, playingSeconds = playingSeconds };
+                await t.Connect(room?.Trim(), name, mapId);
                 SwitchTarget(t);
-                app.Log($"サーバーにつながりました ({t.Label})");
+                var g = t.game;
+                app.Log(g.IsHost
+                    ? $"部屋を作りました ({ServerTarget.Short(g.sessionId)}…)。ケイが入ったら「準備をはじめる」"
+                    : $"部屋に入りました ({ServerTarget.Short(g.sessionId)}…)。ホストが始めるのを待ちます");
             }
             catch (Exception err)
             {
+                t?.Close();
                 app.Log($"サーバーに接続できません: {err.Message}");
             }
             finally { busy = false; }
@@ -220,8 +342,16 @@ namespace AKun
         {
             target.Close();
             target = t;
+            ClearPosts();
+            lastRound = Server?.game.round ?? -1;
+            gamePanel.Visible = Server != null;
+        }
+
+        void ClearPosts()
+        {
             posted.Clear();
             editingId = null;
+            disguisedId = null;
             counter = 0;
         }
 
@@ -229,8 +359,27 @@ namespace AKun
 
         public void Update()
         {
+            var s = Server;
+            if (s != null)
+            {
+                s.Tick();
+                // 新しいラウンド: 前のラウンドのオブジェクトはもう使われない (仕様書 3.1)。粘土はそのまま残す
+                if (s.game.round != lastRound)
+                {
+                    lastRound = s.game.round;
+                    if (posted.Count > 0) app.Log($"ラウンド {lastRound}: 前のラウンドの投稿は片付けました (粘土はそのまま)");
+                    ClearPosts();
+                }
+                // 隠す場所を選んでいる間に投稿できなくなった (見つかった、ラウンドが終わった)
+                if (Choosing && !busy && Blocked != null)
+                {
+                    app.Log($"投稿をやめました: {Blocked}");
+                    EndChoosing();
+                }
+            }
             if (xrPanel.Visible) xrPanel.Refresh();
             if (hidePanel.Visible) hidePanel.Refresh();
+            if (gamePanel.Visible) gamePanel.Refresh();
         }
     }
 }

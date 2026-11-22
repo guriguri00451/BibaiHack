@@ -133,7 +133,7 @@ namespace AKun
             BuildHud();
             map = new MapView(clayMat);
             post = new Post(this, workspace, PANEL_Z);
-            uiPanels.Add(panel); uiPanels.Add(propPanel); uiPanels.Add(post.Panel); uiPanels.Add(post.HidePanel);
+            uiPanels.Add(panel); uiPanels.Add(propPanel); uiPanels.Add(post.Panel); uiPanels.Add(post.HidePanel); uiPanels.Add(post.GamePanel);
             LoadParams();
             Log($"起動しました (文字: {Gfx.FontName})");
             RequestPermissions();
@@ -501,16 +501,20 @@ namespace AKun
 #endif
         }
 
-        // サーバーの設定: Intent の extra (server / room / name) か、persistentDataPath/config.json
+        // サーバーの設定: Intent の extra か、persistentDataPath/config.json
+        //   server: 接続先 (例 https://bibai.t0waxx.com/a-kun-01)。無ければ投稿は「この端末内」
+        //   room:   入るセッションの ID。空なら部屋を作ってホストになる
+        //   name / map / prepare (準備の秒数) / play (本番の秒数)
         void ApplyConfig()
         {
-            string server = null, room = null, name = null, mapArg = null;
+            string server = null, room = null, name = null, mapArg = null, prepare = null, play = null;
             try
             {
                 string path = Path.Combine(Application.persistentDataPath, "config.json");
                 if (File.Exists(path) && MiniJson.Parse(File.ReadAllText(path)) is Dictionary<string, object> cfg)
                 {
                     server = cfg.Str("server"); room = cfg.Str("room"); name = cfg.Str("name"); mapArg = cfg.Str("map");
+                    prepare = cfg.Str("prepare"); play = cfg.Str("play");
                 }
             }
             catch (Exception e) { Log($"config.json を読めません: {e.Message}"); }
@@ -524,15 +528,37 @@ namespace AKun
                 room = intent.Call<string>("getStringExtra", "room") ?? room;
                 name = intent.Call<string>("getStringExtra", "name") ?? name;
                 mapArg = intent.Call<string>("getStringExtra", "map") ?? mapArg;
+                prepare = intent.Call<string>("getStringExtra", "prepare") ?? prepare;
+                play = intent.Call<string>("getStringExtra", "play") ?? play;
             }
             catch (Exception e) { Debug.Log($"[clay] intent を読めません: {e.Message}"); }
 #endif
             if (!string.IsNullOrEmpty(mapArg)) mapId = mapArg;
             if (!string.IsNullOrEmpty(server))
             {
-                Log($"サーバーに接続します: {server} 部屋 {room}");
-                post.Connect(server, room ?? "", string.IsNullOrEmpty(name) ? "a-kun" : name);
+                Log(string.IsNullOrEmpty(room) ? $"サーバーに接続して部屋を作ります: {server}" : $"サーバーに接続します: {server} 部屋 {room}");
+                post.Connect(server, room ?? "", string.IsNullOrEmpty(name) ? "a-kun" : name, mapId, Seconds(prepare, 120), Seconds(play, 180));
             }
+        }
+
+        static double Seconds(string s, double fallback)
+            => double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) && v > 0 ? v : fallback;
+
+        // マップ: サーバーにつないでいれば GET /v1/maps/{mapId}。使えなければ StreamingAssets/mock/{mapId}.json
+        async Task LoadMap()
+        {
+            var s = post.Server;
+            string id = s?.game.mapId ?? mapId;
+            if (s != null)
+            {
+                try { await map.Load(id, s.apiBase, s.Token); return; }
+                catch (Exception e)
+                {
+                    Log($"[未実装] GET /maps/{id} を使えないので、端末内のマップを使います");
+                    Debug.LogWarning($"[clay] {e.Message}");
+                }
+            }
+            await map.Load(id);
         }
 
         // ================= 粘土 =================
@@ -618,7 +644,7 @@ namespace AKun
         {
             if (!map.IsLoaded)
             {
-                if (mapLoading == null) { Log($"マップを読み込みます: {mapId}"); mapLoading = map.Load(mapId); }
+                if (mapLoading == null) { Log($"マップを読み込みます: {post.Server?.game.mapId ?? mapId}"); mapLoading = LoadMap(); }
                 try { await mapLoading; }
                 catch (Exception) { mapLoading = null; throw; } // 次の「投稿する」でもう一度読む
                 Log($"マップを読み込みました: {map.Name}");
