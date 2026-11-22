@@ -1,0 +1,96 @@
+# a-kun-unity: 粘土でモデルを作って投稿する (Android XR アプリ)
+
+[a-kun](../a-kun/) (WebXR 版) を Unity で作り直したものです。中身 (粘土の計算、手の触り方、パネル、投稿) は Web 版と同じで、Android XR (Galaxy XR など) のアプリとして動きます。
+
+- Unity **6000.3.22f1** (URP、OpenXR、Android XR)
+- パッケージ: Unity OpenXR: Android XR 1.5.1、XR Hands、AR Foundation (パススルー)、Input System
+- 仕様: [docs/whiteboard-brainstorm.md](../docs/whiteboard-brainstorm.md)
+
+## ファイル
+
+| ファイル | 中身 |
+|---|---|
+| `Assets/AKun/Scripts/ClayField.cs` | 粘土の距離場 (80³) と色。押す・なでる・引っ張る・塗る、Surface Nets のメッシュ化 (`a-kun/src/sdf.js` の移植) |
+| `Assets/AKun/Scripts/ClayApp.cs` | 本体。カメラとパススルー、手での造形、つまむ・移動、パネル、ログの板、投稿用の書き出し (`a-kun/src/main.js` の移植) |
+| `Assets/AKun/Scripts/Hands.cs` | 手の関節・骨、震えを抑えるフィルタ、半透明の手の描画 |
+| `Assets/AKun/Scripts/ButtonPanel.cs` | 空中のボタン・スライダー・色見本。指先で押す / レイで指してつまむ (`a-kun/src/panel.js` の移植) |
+| `Assets/AKun/Scripts/Post.cs` / `Uploader.cs` | 投稿のパネルと投稿先 (この端末内 / ゲームサーバー) (`a-kun/src/post/` の移植) |
+| `Assets/AKun/Scripts/Glb.cs` | GLB の書き出し |
+| `Assets/AKun/Resources/Shaders/` | 粘土 (頂点カラー)、半透明の手、パネルの角丸、文字 |
+| `Assets/AKun/Editor/ProjectSetup.cs` | プロジェクトの設定 (Player、URP、XR、シーン) と APK のビルド |
+| `Assets/AKun/Editor/ClayTests.cs` | 粘土の計算の確認 |
+
+シーン (`Assets/AKun/Scenes/Main.unity`) には `ClayApp` を 1 つ置くだけで、カメラ・パススルー・粘土・パネルは実行時にコードで組み立てます。
+
+## ビルドして実機に入れる
+
+`ProjectSetup` が設定をすべて行うので、エディタで手作業の設定は要りません。
+
+1. Unity Hub で 6000.3.22f1 を Android Build Support (SDK・NDK・OpenJDK 付き) と一緒に入れる
+2. このフォルダをプロジェクトとして開き、メニューの **AKun > Build APK** を選ぶ (コマンドラインなら下のとおり)
+3. ヘッドセットを USB でつないで入れる
+
+```bash
+/Applications/Unity/Hub/Editor/6000.3.22f1/Unity.app/Contents/MacOS/Unity -batchmode -quit -projectPath a-kun-unity -executeMethod AKun.EditorTools.ProjectSetup.BuildApk -logFile -
+```
+
+```bash
+adb install -r a-kun-unity/Builds/a-kun-clay.apk
+```
+
+初めて起動したときに「手の追跡」の許可を求められるので、許可してください。
+
+`ProjectSetup.Setup` がすること:
+
+- Player: Android、IL2CPP / ARM64、Vulkan、Linear、最小 API 29、GameActivity、Resizeable Activity、Run In Background、Input System
+- URP: `Assets/AKun/Settings/` に URP の設定を作る (HDR なし、ポストエフェクトなし、MSAA 4x)
+- XR: Android で OpenXR、機能は Android XR Support / Session / Camera (パススルー) / Hand Tracking / Hand Interaction Profile。描き方は Single Pass Instanced
+- シーンを作ってビルド設定に入れる
+
+## 使い方
+
+起動すると、頭の高さで目の前 (約 45cm 先) に粘土の球 (直径 約 42cm) とパネルが出ます。操作は Web 版と同じです。
+
+- さわる (手のひらで触れる): 押し込みの深さで自動で切り替わる。軽く触れる=なでる、深く押す=こねる (「こねる開始」の初期値 15mm)
+- 塗る: 人差し指の先で。左のパネルの色見本で色を選ぶ
+- 粘土の表面をつまむ: 引っ張る (体積は増えない)。粘土のそば (12cm 以内) では粘土ごとは動かない。離れた所をつまむと移動、両手で回転・拡大縮小
+- ボタン: 手から伸びるレイで指してつまむとクリック (OS と同じ)。指先で直接押してもよい
+- 右のパネル「粘土の性質」: 柔らかさなど (端末に保存される)
+- 粘土の上 (奥) のボタン: 投稿する / 更新 / 新しく作る。上の板に最近のログが出る
+
+## 投稿するもの
+
+Web 版と同じです ([a-kun/README.md](../a-kun/README.md#投稿するもの))。
+
+- GLB 1 ファイル (`POSITION` / `NORMAL` / `COLOR_0`、メートル、Y 上、原点は底面の中心)。体積が 0.0027 m³ になるように大きさをそろえる
+- Transform は `position` / `rotation` / `scale` ([1,1,1])。座標は WebXR と同じ右手系 (Unity の z を反転して送る)
+- 投稿した GLB は端末にも保存される: `/sdcard/Android/data/com.bibaihack.akunclay/files/posts/clay-<n>-v<版>.glb`
+
+```bash
+adb pull /sdcard/Android/data/com.bibaihack.akunclay/files/posts/
+```
+
+### ゲームサーバーにつなぐ
+
+サーバーとの約束は Web 版の README の表と同じです。起動するときに Intent の extra で渡すか、
+
+```bash
+adb shell am start -n com.bibaihack.akunclay/com.unity3d.player.UnityPlayerGameActivity --es server wss://example.com/ws --es room ABCD --es name a-kun
+```
+
+端末の `files/config.json` に `{"server": "wss://…", "room": "ABCD", "name": "a-kun"}` を置きます。どちらも無ければ、投稿は「この端末内」に置かれます (アプリを終了すると一覧は消える。GLB のファイルは残る)。
+
+## 調整しやすい値 (`ClayApp.cs` の先頭)
+
+- `CUBE_SCALE` / `START_R`: 最初の球の大きさ (半径 8.65cm を 2.45 倍)
+- `PINCH_ON` / `PINCH_OFF` / `PRE_PINCH`: つまむ判定の指の距離
+- `PALETTE`: 色見本の 12 色
+- `NO_MOVE_NEAR`: 粘土のそばでつまんでも粘土ごと動かさない距離
+- `RECENTER_FORWARD` / `RECENTER_DROP`: 起動したとき・「手元へ」で置く位置
+- `limit*` / `visc*`: 押し込みの制限と粘性 (右のパネルのスライダーと同じもの)
+
+## Web 版とのちがい
+
+- 画面 (マウス) での造形はない。エディタで再生すると、粘土とパネルを眺めてマウスでボタンを押せるだけ
+- 投稿の一覧 (作り直す・取消・GLB の保存) と、サーバーの接続フォームはない。サーバーは起動時の設定で渡す
+- 手のレイは OpenXR の Hand Interaction Profile の aim pose を使う。取れないときは、肩のあたりから指の付け根を通るレイにする
