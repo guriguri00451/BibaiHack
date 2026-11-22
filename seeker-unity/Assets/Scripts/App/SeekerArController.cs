@@ -7,19 +7,41 @@ using UnityEngine.XR.ARSubsystems;
 namespace Seeker.App
 {
     /// <summary>
-    /// マーカーを読んでいる間は共有マップの原点を合わせ続ける。XR Origin は動かさない。
+    /// マーカーを読んでいる間は共有マップの原点を合わせ続け、読み込んだ3Dマップをその原点に置く。XR Origin は動かさない。
     /// 目印のオブジェクトは ARTrackedImageManager の Tracked Image Prefab がマーカーに追従して出す。
     /// マーカーを見失ったら最後に合わせた原点を維持する。
     /// </summary>
     public sealed class SeekerArController : MonoBehaviour
     {
         [SerializeField] private ARTrackedImageManager imageManager;
+        [SerializeField] private string mapId = "bibai-museum";
+        // 空ならモック(StreamingAssets/mock)を使う。API 実装後に https://host/v1 を入れる
+        [SerializeField] private string apiBaseUrl = "";
 
         private readonly CoordinateAdapter adapter = new CoordinateAdapter();
+        private MapPresenter mapPresenter;
         private Text statusLabel;
+
         private void Awake()
         {
             BuildUi();
+            mapPresenter = new MapPresenter(transform);
+        }
+
+        private async void Start()
+        {
+            try
+            {
+                var definition = await new MapService(apiBaseUrl).FetchAsync(mapId);
+                await mapPresenter.LoadAsync(definition);
+                // 読み込み前にマーカーを捉えていた場合に備えて、ここでも置く
+                mapPresenter.Place(adapter);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogException(e);
+                statusLabel.text = "マップの読み込みに失敗しました";
+            }
         }
 
         private void OnEnable() => imageManager.trackablesChanged.AddListener(OnTrackablesChanged);
@@ -42,6 +64,7 @@ namespace Seeker.App
                 return;
             }
             adapter.Calibrate(new Pose(image.transform.position, image.transform.rotation));
+            mapPresenter.Place(adapter);
             statusLabel.text = "マーカーを追従中";
         }
 
