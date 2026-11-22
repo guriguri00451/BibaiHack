@@ -1,33 +1,29 @@
 ## 概要
 
-Closes #2
+Refs #2（Unity 版の AR 設定調整は別ブランチで続行するため、issue はクローズしない）
 
-QR(画像)マーカーで共有マップの原点を合わせ、端末ローカル座標⇔マップ座標を変換するAdapterを追加。検出は WebXR `image-tracking`。
+マーカー(QR)で共有マップの原点を合わせ、端末ローカル⇔マップ座標を変換する Adapter を追加。
+検出方式を WebXR `image-tracking`（Chrome フラグ必須・標準化停滞）から Unity AR Foundation（ARCore/ARKit）へ切り替える方針に変えたため、両方を入れている。
 
 ## 変更内容
 
-- `seeker/src/ar/transform.js`: Transform型(§3.2)と three.js Matrix4 の相互変換（Quaternion正規化）
-- `seeker/src/ar/coordinateAdapter.js`: `calibrate / reset / localToMap / mapToLocal`。床置きマーカーの法線(+Z)をマップ+Yへ合わせる（X軸まわり90°）
-- `seeker/src/ar/markerTracker.js`: `trackedImages` 生成と、`tracked` 状態のときだけ原点を合わせる処理（`emulated` は無視）
-- `seeker/src/main.js` / `index.html`: マップ原点に10cmキューブ、「原点を再スキャン」ボタン
-- `seeker/public/marker.png`: マーカー画像（一辺0.15m・余白込みで印刷する前提）
-
-前提・割り切り: マーカーは床置き。`image-tracking` は Chrome フラグ必須（`camera-access`+JS検出は今回見送り）。
+- `seeker/`（three.js + WebXR）: 座標 Adapter と `image-tracking` による原点合わせ。vitest 10件。検証用として残す
+- `seeker-unity/`（Unity 6000.3.22f1）: AR Foundation 6.7.1 + ARCore。
+  - `CoordinateAdapter`: マップ(右手系)⇔Unity(左手系)を Z 反転で変換。EditMode テスト 9件
+  - `SeekerArController`: `ARTrackedImageManager` でマーカーを読み、原点に 10cm キューブ。再スキャンボタン付き
+  - `Editor/ProjectSetup.cs`: XR 設定・参照画像ライブラリ・URP の `ARBackgroundRendererFeature`・シーンを再現可能に生成
 
 ## 動作確認（AI検証済み）
 
-- [x] `npm test` グリーン（10 passed。2端末が同一マップ座標になることの数値検証を含む）
-- [x] `npm run build` 成功
+- [x] `seeker`: `npm test` 10 passed / `npm run build` 成功
+- [x] `seeker-unity`: EditMode テスト 9 passed
+- [x] Android ビルド成功、Pixel 9a で起動し ARCore が参照画像1枚を読み込むことをログで確認
 
-## ⚠️ 目視確認が必要（人間がマージ前に実施）
+## ⚠️ 未解決・目視確認が必要
 
-> AIは実機ARを動かせていません。チェックを入れるのは動かして確認した人です。
-
-- [ ] `marker.png` を一辺0.15mで印刷して床に置く
-- [ ] 2台のAndroid Chrome（`chrome://flags/#webxr-incubations` 有効）で ARを開始 → マーカーを映すと赤いキューブが出る
-- [ ] 2台のキューブが実空間で同じ位置（マーカー中心の上）に見える
-- [ ] 「原点を再スキャン」で合わせ直せる
-- [ ] フラグ無効時にステータスへ案内が出てAR自体は起動する
+- [ ] **Unity 版で QR マーカーが検出されない**（実機で確認済み）。AR 側の設定が原因と見て別ブランチで対応する。QR は特徴点が少なく ARCore の画像認識に不向きな可能性が高い
+- [ ] 検出できた後に、2台で同じ場所にキューブが見えること
+- [ ] `ARTrackedImage` の +Y が床置きマーカーの法線（上向き）という仮定が実機で正しいか
 
 ## 関連
 
