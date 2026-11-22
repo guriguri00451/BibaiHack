@@ -3,9 +3,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ClayField } from './sdf.js?v=0.6.8';
-import { ButtonPanel } from './panel.js?v=0.6.8';
-import { initPost } from './post/ui.js?v=0.6.8';
+import { ClayField } from './sdf.js?v=0.6.9';
+import { ButtonPanel } from './panel.js?v=0.6.9';
+import { initPost } from './post/ui.js?v=0.6.9';
 
 // ================= 設定 =================
 const CLAY_HOME = new THREE.Vector3(0, 1.1, -0.45);
@@ -914,7 +914,7 @@ let recenterPending = false;
 let xrStartT = 0;
 
 // ---- 状態表示 (画面の UI と、XR 中は目の前の文字板) ----
-const VERSION = '0.6.8';
+const VERSION = '0.6.9';
 const logLines = [];
 function log(msg) {
   const line = `${new Date().toLocaleTimeString()} ${msg}`;
@@ -923,22 +923,22 @@ function log(msg) {
   if (logLines.length > 6) logLines.shift();
   setXRMessage(msg);
   hud.draw();
-  hud.until = performance.now() / 1000 + 8;
 }
 const hud = (() => {
   const canvas = document.createElement('canvas');
   canvas.width = 1024; canvas.height = 320;
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
+  // ログの板は頭には追従せず、作業台に固定する (投稿件数などの UI の上)。作業台と一緒に「手元へ」で動く
   const mesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.5, 0.156),
-    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false }),
+    new THREE.PlaneGeometry(0.34, 0.106),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true }),
   );
-  mesh.renderOrder = 100;
+  mesh.position.set(0, 0.31, -0.08);
   mesh.visible = false;
-  scene.add(mesh);
+  workspace.add(mesh);
   return {
-    mesh, until: 0,
+    mesh,
     draw() {
       const ctx = canvas.getContext('2d');
       ctx.clearRect(0, 0, 1024, 320);
@@ -951,17 +951,11 @@ const hud = (() => {
       logLines.forEach((l, i) => ctx.fillText(l, 24, 64 + i * 42));
       tex.needsUpdate = true;
     },
-    // 頭の 0.8m 前、少し下に置く
-    follow() {
-      const now = performance.now() / 1000;
-      mesh.visible = renderer.xr.isPresenting && now < this.until;
-      if (!mesh.visible) return;
-      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-      mesh.position.copy(camera.position).addScaledVector(fwd, 0.8).add(new THREE.Vector3(0, -0.12, 0));
-      mesh.quaternion.copy(camera.quaternion);
-    },
+    // XR の間は出し続ける
+    follow() { mesh.visible = renderer.xr.isPresenting; },
   };
 })();
+hud.draw();
 addEventListener('error', (e) => log(`エラー: ${e.message}`));
 addEventListener('unhandledrejection', (e) => log(`エラー: ${e.reason?.message || e.reason}`));
 
