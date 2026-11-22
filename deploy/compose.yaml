@@ -39,7 +39,7 @@ services:
       NODE_ENV: production
       BASE_PATH: ""
       PUBLIC_URL: https://bibai.t0waxx.com
-      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/prod
+      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_prod
       JWT_SECRET: ${JWT_SECRET_PROD:?}
 
   server-stg:
@@ -50,7 +50,7 @@ services:
       NODE_ENV: production
       BASE_PATH: "/stg"
       PUBLIC_URL: https://bibai.t0waxx.com
-      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/stg
+      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_stg
       JWT_SECRET: ${JWT_SECRET_STG:?}
 
   server-dev:
@@ -61,7 +61,7 @@ services:
       NODE_ENV: production
       BASE_PATH: "/dev"
       PUBLIC_URL: https://bibai.t0waxx.com
-      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/dev
+      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_dev
       JWT_SECRET: ${JWT_SECRET_DEV:?}
 
   server-a-kun-01:
@@ -72,7 +72,7 @@ services:
       NODE_ENV: production
       BASE_PATH: "/a-kun-01"
       PUBLIC_URL: https://bibai.t0waxx.com
-      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/a_kun_01
+      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_a_kun_01
       JWT_SECRET: ${JWT_SECRET_A_KUN_01:?}
 
   server-a-kun-02:
@@ -83,7 +83,7 @@ services:
       NODE_ENV: production
       BASE_PATH: "/a-kun-02"
       PUBLIC_URL: https://bibai.t0waxx.com
-      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/a_kun_02
+      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_a_kun_02
       JWT_SECRET: ${JWT_SECRET_A_KUN_02:?}
 
   server-a-kun-03:
@@ -94,7 +94,7 @@ services:
       NODE_ENV: production
       BASE_PATH: "/a-kun-03"
       PUBLIC_URL: https://bibai.t0waxx.com
-      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/a_kun_03
+      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_a_kun_03
       JWT_SECRET: ${JWT_SECRET_A_KUN_03:?}
 
   server-so-ma-01:
@@ -105,7 +105,7 @@ services:
       NODE_ENV: production
       BASE_PATH: "/so-ma-01"
       PUBLIC_URL: https://bibai.t0waxx.com
-      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/so_ma_01
+      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_so_ma_01
       JWT_SECRET: ${JWT_SECRET_SO_MA_01:?}
 
   server-so-ma-02:
@@ -116,7 +116,7 @@ services:
       NODE_ENV: production
       BASE_PATH: "/so-ma-02"
       PUBLIC_URL: https://bibai.t0waxx.com
-      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/so_ma_02
+      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_so_ma_02
       JWT_SECRET: ${JWT_SECRET_SO_MA_02:?}
 
   server-so-ma-03:
@@ -127,7 +127,7 @@ services:
       NODE_ENV: production
       BASE_PATH: "/so-ma-03"
       PUBLIC_URL: https://bibai.t0waxx.com
-      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/so_ma_03
+      DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_so_ma_03
       JWT_SECRET: ${JWT_SECRET_SO_MA_03:?}
 
 volumes:

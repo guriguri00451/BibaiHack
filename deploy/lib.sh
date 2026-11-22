@@ -15,7 +15,8 @@ info() { echo "==> $*" >&2; }
 envs() { grep -vE '^\s*(#|$)' "$DEPLOY_DIR/envs.txt"; }
 env_exists() { envs | grep -qx -- "$1"; }
 require_env() { env_exists "$1" || die "知らない環境です: $1（deploy/envs.txt を見てください）"; }
-db_name() { echo "${1//-/_}"; }
+# 前置き env_ を付ける。素の "dev" だと Bun.sql が接続に失敗する（Bun 1.3.14 で確認）
+db_name() { echo "env_${1//-/_}"; }
 base_path() { [[ "$1" == prod ]] && echo "" || echo "/$1"; }
 # macOS の bash 3.2 でも動くよう tr で大文字にする
 secret_var() { echo "JWT_SECRET_$(echo "${1//-/_}" | tr "[:lower:]" "[:upper:]")"; }

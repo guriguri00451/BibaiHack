@@ -1,6 +1,6 @@
 # 環境の一覧。1行に1つ。増やすときは名前を足して ./deploy/render.sh を実行する
 # prod は https://bibai.t0waxx.com/ 直下、それ以外は https://bibai.t0waxx.com/<名前>/
-# 名前は英小文字・数字・ハイフンのみ。DB 名はハイフンを _ にしたもの
+# 名前は英小文字・数字・ハイフンのみ。DB 名は env_ ＋ハイフンを _ にしたもの（例 env_a_kun_01）
 prod
 stg
 dev
