@@ -295,12 +295,77 @@ export class ClayField {
     const steps = Math.max(1, Math.ceil(len / (R * 0.35)));
     const sx = delta.x / steps, sy = delta.y / steps, sz = delta.z / steps;
     const cur = { x: c.x, y: c.y, z: c.z };
+    // 引き出すと粘土が増えるので、動かす前の体積を測っておき、あとで戻す
+    const m = R + 3;
+    const box = [
+      Math.min(c.x, c.x + delta.x) - m, Math.max(c.x, c.x + delta.x) + m,
+      Math.min(c.y, c.y + delta.y) - m, Math.max(c.y, c.y + delta.y) + m,
+      Math.min(c.z, c.z + delta.z) - m, Math.max(c.z, c.z + delta.z) + m,
+    ];
+    const before = this._boxVolume(box);
     let any = false;
     for (let s = 0; s < steps; s++) {
       any = this._pullStep(cur, sx, sy, sz, R) || any;
       cur.x += sx; cur.y += sy; cur.z += sz;
     }
+    if (any) this._restoreBoxVolume(box, before);
     return any;
+  }
+
+  // 範囲 box = [x0, x1, y0, y1, z0, z1] (格子) の体積 (占有する格子の数。表面をまたぐ格子は割合)
+  _boxVolume(box) {
+    const { N, d } = this;
+    const NN = N * N;
+    const x0 = Math.max(1, Math.floor(box[0])), x1 = Math.min(N - 2, Math.ceil(box[1]));
+    const y0 = Math.max(1, Math.floor(box[2])), y1 = Math.min(N - 2, Math.ceil(box[3]));
+    const z0 = Math.max(1, Math.floor(box[4])), z1 = Math.min(N - 2, Math.ceil(box[5]));
+    let v = 0;
+    for (let z = z0; z <= z1; z++) for (let y = y0; y <= y1; y++) {
+      let i = x0 + N * y + NN * z;
+      for (let x = x0; x <= x1; x++, i++) { const t = d[i]; v += t <= -0.5 ? 1 : t >= 0.5 ? 0 : 0.5 - t; }
+    }
+    return v;
+  }
+
+  // box の中の体積が target に戻るように、距離場をなめらかに少しずらして、表面を出し入れする。
+  // 範囲の縁では効き目を 0 に近づけて、まわりと段差ができないようにする
+  _restoreBoxVolume(box, target) {
+    const { N, d } = this;
+    const NN = N * N;
+    const x0 = Math.max(1, Math.floor(box[0])), x1 = Math.min(N - 2, Math.ceil(box[1]));
+    const y0 = Math.max(1, Math.floor(box[2])), y1 = Math.min(N - 2, Math.ceil(box[3]));
+    const z0 = Math.max(1, Math.floor(box[4])), z1 = Math.min(N - 2, Math.ceil(box[5]));
+    const ramp = (i, a, b) => Math.min(1, Math.min(i - a + 1, b - i + 1) / 4); // 縁から 4 マスで 0 → 1
+    let remaining = target - this._boxVolume(box);
+    let changed = false;
+    for (let iter = 0; iter < 10 && Math.abs(remaining) >= 0.3; iter++) {
+      // 表面 (距離が -0.5〜0.5) の面積の見積もり: ずらした量 1 あたりの体積の変化
+      let A = 0;
+      for (let z = z0; z <= z1; z++) {
+        const wz = ramp(z, z0, z1);
+        for (let y = y0; y <= y1; y++) {
+          const wyz = wz * ramp(y, y0, y1);
+          let i = x0 + N * y + NN * z;
+          for (let x = x0; x <= x1; x++, i++) { const v = d[i]; if (v > -0.5 && v < 0.5) A += wyz * ramp(x, x0, x1); }
+        }
+      }
+      if (A < 1) break;
+      const delta = Math.max(-2, Math.min(2, -remaining / A)); // 体積を減らす (remaining < 0) ときは、距離を増やす
+      for (let z = z0; z <= z1; z++) {
+        const wz = ramp(z, z0, z1);
+        for (let y = y0; y <= y1; y++) {
+          const wyz = wz * ramp(y, y0, y1);
+          let i = x0 + N * y + NN * z;
+          for (let x = x0; x <= x1; x++, i++) d[i] += delta * wyz * ramp(x, x0, x1);
+        }
+      }
+      changed = true;
+      const now = this._boxVolume(box);
+      const prev = remaining;
+      remaining = target - now;
+      if (Math.abs(remaining) > Math.abs(prev) * 0.95) break; // 効かなくなったら止める
+    }
+    if (changed) this.markDirtyPoints(x0, x1, y0, y1, z0, z1);
   }
 
   _pullStep(c, vx, vy, vz, R) {
