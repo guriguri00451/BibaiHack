@@ -28,6 +28,9 @@ function createScene() {
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.xr.enabled = true;
+  // three のデフォルトは 'local-floor' だが、requiredFeatures に入れていないと
+  // requestReferenceSpace が失敗する。hit-test には 'local' で足りる
+  renderer.xr.setReferenceSpaceType('local');
   document.body.appendChild(renderer.domElement);
 
   // hit-test の姿勢行列を毎フレーム直接流し込むので自動更新は切る
@@ -82,21 +85,27 @@ function updateReticle(frame) {
 }
 
 async function startAr() {
+  let session = null;
+  let failureMessage = null;
   try {
-    const session = await navigator.xr.requestSession('immersive-ar', {
+    session = await navigator.xr.requestSession('immersive-ar', {
       requiredFeatures: ['hit-test'],
       optionalFeatures: ['dom-overlay'],
       domOverlay: { root: overlay },
     });
     session.addEventListener('end', () => {
       startButton.hidden = false;
-      statusLabel.textContent = 'ARを終了しました';
+      // 起動失敗で end() した場合は原因表示を上書きしない
+      statusLabel.textContent = failureMessage ?? 'ARを終了しました';
     });
     await renderer.xr.setSession(session);
     startButton.hidden = true;
   } catch (error) {
     console.error('AR session start failed', error);
-    statusLabel.textContent = `ARを開始できませんでした: ${error.message}`;
+    failureMessage = `ARを開始できませんでした: ${error.message}`;
+    statusLabel.textContent = failureMessage;
+    // setSession 等で失敗してもセッションが残ると再タップが「already active」で弾かれる
+    if (session) session.end().catch(() => {});
   }
 }
 
