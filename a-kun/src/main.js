@@ -3,9 +3,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ClayField } from './sdf.js?v=0.6.6';
-import { ButtonPanel } from './panel.js?v=0.6.6';
-import { initPost } from './post/ui.js?v=0.6.6';
+import { ClayField } from './sdf.js?v=0.6.7';
+import { ButtonPanel } from './panel.js?v=0.6.7';
+import { initPost } from './post/ui.js?v=0.6.7';
 
 // ================= 設定 =================
 const CLAY_HOME = new THREE.Vector3(0, 1.1, -0.45);
@@ -412,6 +412,9 @@ const hands = [0, 1].map((i) => {
   return hs;
 });
 
+// 立方体の表面からこの距離 (m) より近くでつまんだときは、粘土ごと動かす・回す操作を始めない
+// (表面そのものをつまんだときは、これまでどおり引っ張る)
+const NO_MOVE_NEAR = 0.12;
 let manipDirty = true;
 let manip = null;
 
@@ -429,6 +432,8 @@ function startPinch(hs) {
     const inside = g.clone().addScaledVector(n, -(s + R * 0.25));
     hs.grabOffset.subVectors(gridToWorld(inside), hs.pinchPos);
     hs.lastG.copy(inside);
+  } else if (s < worldLenToGrid(NO_MOVE_NEAR)) {
+    hs.pinchMode = 'none'; // 立方体のそばでつまんでも、粘土ごと動かさない
   } else {
     hs.pinchMode = 'move';
   }
@@ -765,7 +770,7 @@ function updateXR(dt, t) {
         const g = worldToGrid(_w.addVectors(hs.pinchPos, hs.grabOffset));
         pullBetween(hs.lastG, g);
         hs.lastG.copy(g);
-      } else {
+      } else if (hs.pinchMode === 'move') {
         movers.push(hs);
       }
       rememberJoints(hs);
@@ -909,7 +914,7 @@ let recenterPending = false;
 let xrStartT = 0;
 
 // ---- 状態表示 (画面の UI と、XR 中は目の前の文字板) ----
-const VERSION = '0.6.6';
+const VERSION = '0.6.7';
 const logLines = [];
 function log(msg) {
   const line = `${new Date().toLocaleTimeString()} ${msg}`;
