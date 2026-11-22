@@ -2,14 +2,14 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ClayField } from './sdf.js?v=0.8.1';
-import { ButtonPanel } from './panel.js?v=0.8.1';
-import { initPost } from './post/ui.js?v=0.8.1';
+import { ClayField } from './sdf.js?v=0.8.2';
+import { ButtonPanel } from './panel.js?v=0.8.2';
+import { initPost } from './post/ui.js?v=0.8.2';
 
 // ================= 設定 =================
-// 立方体の大きさ: 作る粘土 (一辺 14cm) を 3.5 倍にして、一辺 約 50cm の立方体にする。
-// 格子 (80³) は同じなので、1 マスは約 1.8cm になる
-const CUBE_SCALE = 3.5;
+// 立方体の大きさ: 作る粘土 (一辺 14cm) を 2.45 倍にして、一辺 約 34cm の立方体にする。
+// 格子 (80³) は同じなので、1 マスは約 1.2cm になる
+const CUBE_SCALE = 2.45;
 const CUBE_HALF = 0.07 * CUBE_SCALE;     // 立方体の半分の長さ (m)
 const PANEL_Z = CUBE_HALF + 0.06;        // パネルを置く位置: 立方体の手前の面から 6cm 手前
 const CLAY_HOME = new THREE.Vector3(0, CUBE_HALF + 0.05, -0.6); // 画面の初期位置 (床の近く)
@@ -33,7 +33,7 @@ const PALETTE = [
   '#c98060', '#8d5a3b', '#f2e6d0', '#ffffff', '#3b3b3b', '#d84a3a',
   '#f29a38', '#f2d14a', '#6bbf59', '#3f8fd2', '#7a5cc7', '#ef8fb5',
 ];
-const state = { mode: 'touch', brushR: 0.04, color: PALETTE[0] };
+const state = { mode: 'touch', brushR: 0.03, color: PALETTE[0] };
 let _rgbKey = '', _rgb = [0, 0, 0];
 function colorRGB() {
   if (_rgbKey !== state.color) {
@@ -961,7 +961,7 @@ let recenterPending = false;
 let xrStartT = 0;
 
 // ---- 状態表示 (画面の UI と、XR 中は目の前の文字板) ----
-const VERSION = '0.8.1';
+const VERSION = '0.8.2';
 const logLines = [];
 function log(msg) {
   const line = `${new Date().toLocaleTimeString()} ${msg}`;
