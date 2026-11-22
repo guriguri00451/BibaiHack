@@ -31,9 +31,7 @@ describe("REST の境界", () => {
     expect((await s.request("POST", "/v1/sessions", { mapId: "m".repeat(65) }, g.accessToken)).status).toBe(400);
   });
 
-  // バグ: Hono が投げる HTTPException(400 Malformed JSON) を onError が 500 にしてしまう。
-  // src/http/app.ts の onError で HTTPException を通す必要がある
-  test.failing("壊れた JSON は 400 と仕様書の形式", async () => {
+  test("壊れた JSON は 400 と仕様書の形式", async () => {
     const res = await fetch(`${s.base}/v1/guests`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -54,9 +52,7 @@ describe("REST の境界", () => {
     expect(res.status).toBe(401);
   });
 
-  // バグ: 署名は正しいが users に無い userId のトークンだと、外部キー違反で 500 になる。
-  // 401（ユーザーが存在しない）を返すべき。src/http/routes.ts の requireUser がユーザーの存在を見ていない
-  test.failing("存在しないユーザーのトークンでセッションを作ると 401", async () => {
+  test("存在しないユーザーのトークンでセッションを作ると 401", async () => {
     const token = await issueToken("00000000-0000-4000-8000-000000000000", JWT_SECRET);
     const r = await s.request("POST", "/v1/sessions", { mapId: "m" }, token);
     expect(r.status).toBe(401);

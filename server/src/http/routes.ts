@@ -34,6 +34,9 @@ async function requireUser(c: Context, deps: ApiDeps): Promise<string> {
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
   const userId = token ? await verifyToken(token, deps.jwtSecret) : null;
   if (!userId) throw new ApiError(401, "UNAUTHORIZED", "A valid access token is required.");
+  // 署名が正しくても、ユーザーが DB に無ければ（DB を作り直した後など）認証失敗として扱う
+  const [user] = await deps.db.select({ id: users.id }).from(users).where(eq(users.id, userId));
+  if (!user) throw new ApiError(401, "UNAUTHORIZED", "The user for this token no longer exists.");
   return userId;
 }
 
