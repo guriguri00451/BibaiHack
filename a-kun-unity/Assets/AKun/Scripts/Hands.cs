@@ -149,23 +149,40 @@ namespace AKun
     }
 
     // 見えている手: 骨ごとのカプセル (当たり判定と同じ形) を半透明で描く。
-    // 重なった所が濃くならないように、まず深さだけを書き、そのあと手前の面だけを塗る
+    // 重なった所が濃くならないように、まず深さだけを書き (HandDepth)、そのあと手前の面だけを塗る (HandColor)。
+    // 部品 (筒と球) ごとに MeshRenderer を持ち、材質を 2 つ付けて 2 回描く
     public class HandLook
     {
         static Mesh cyl, sph;
         readonly Material depthMat, colorMat;
-        readonly Matrix4x4[] cylM, sphM;
+        readonly List<Transform> cyls = new List<Transform>(), sphs = new List<Transform>();
+        readonly Transform root;
         int nc, ns;
         public float k, w; // こねる度合い / さわっている度合い (なめらかに追う)
 
-        public HandLook()
+        public HandLook(string name)
         {
             cyl ??= Gfx.Cylinder(16);
             sph ??= Gfx.Sphere(16, 12);
-            depthMat = new Material(Gfx.Find("HandDepth")) { enableInstancing = true };
-            colorMat = new Material(Gfx.Find("HandColor")) { enableInstancing = true };
-            cylM = new Matrix4x4[HandBones.BONES.Length];
-            sphM = new Matrix4x4[HandBones.BONES.Length * 2];
+            depthMat = new Material(Gfx.Find("HandDepth"));
+            colorMat = new Material(Gfx.Find("HandColor"));
+            root = new GameObject(name).transform;
+            int nb = HandBones.BONES.Length;
+            for (int i = 0; i < nb; i++) cyls.Add(Part(cyl, "bone"));
+            for (int i = 0; i < nb * 2; i++) sphs.Add(Part(sph, "joint"));
+        }
+
+        Transform Part(Mesh mesh, string name)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(root, false);
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var r = go.AddComponent<MeshRenderer>();
+            r.sharedMaterials = new[] { depthMat, colorMat };
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            r.receiveShadows = false;
+            go.SetActive(false);
+            return go.transform;
         }
 
         public void Begin() { nc = 0; ns = 0; }
@@ -175,23 +192,21 @@ namespace AKun
             var d = b - a;
             float len = d.magnitude;
             var q = len > 1e-5f ? Quaternion.FromToRotation(Vector3.up, d / len) : Quaternion.identity;
-            cylM[nc++] = Matrix4x4.TRS((a + b) * 0.5f, q, new Vector3(r, Mathf.Max(len, 1e-4f), r));
+            var c = cyls[nc++];
+            c.SetPositionAndRotation((a + b) * 0.5f, q);
+            c.localScale = new Vector3(r, Mathf.Max(len, 1e-4f), r);
             var ss = Vector3.one * (r * 0.985f); // 円柱と同じ大きさだと表面が重なってちらつくので、ほんの少し小さくする
-            sphM[ns++] = Matrix4x4.TRS(a, Quaternion.identity, ss);
-            sphM[ns++] = Matrix4x4.TRS(b, Quaternion.identity, ss);
+            var sa = sphs[ns++]; sa.SetPositionAndRotation(a, Quaternion.identity); sa.localScale = ss;
+            var sb = sphs[ns++]; sb.SetPositionAndRotation(b, Quaternion.identity); sb.localScale = ss;
         }
 
         public void SetColor(Color c) => colorMat.SetColor("_BaseColor", c);
 
+        // 使った部品だけを出す
         public void Draw()
         {
-            if (nc == 0) return;
-            var rpD = new RenderParams(depthMat) { shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off, receiveShadows = false };
-            var rpC = new RenderParams(colorMat) { shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off, receiveShadows = false };
-            Graphics.RenderMeshInstanced(rpD, cyl, 0, cylM, nc);
-            Graphics.RenderMeshInstanced(rpD, sph, 0, sphM, ns);
-            Graphics.RenderMeshInstanced(rpC, cyl, 0, cylM, nc);
-            Graphics.RenderMeshInstanced(rpC, sph, 0, sphM, ns);
+            for (int i = 0; i < cyls.Count; i++) { bool on = i < nc; if (cyls[i].gameObject.activeSelf != on) cyls[i].gameObject.SetActive(on); }
+            for (int i = 0; i < sphs.Count; i++) { bool on = i < ns; if (sphs[i].gameObject.activeSelf != on) sphs[i].gameObject.SetActive(on); }
         }
     }
 }

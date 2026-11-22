@@ -266,7 +266,7 @@ namespace AKun
         void BuildHands()
         {
             hands = new[] { new HandState(Handedness.Left), new HandState(Handedness.Right) };
-            looks = new[] { new HandLook(), new HandLook() };
+            looks = new[] { new HandLook("hand-left"), new HandLook("hand-right") };
             brushCursor = new Transform[2];
             brushMat = new Material[2];
             pointers = new (Transform, Transform, LineRenderer)[2];

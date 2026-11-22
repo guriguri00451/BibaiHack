@@ -139,15 +139,22 @@ namespace AKun
             get
             {
                 if (font != null) return font;
+                // ゴシック体 (Sans) の日本語を優先する: CJK + Sans + JP > CJK + Sans > CJK > ほか
                 var names = new List<string>();
                 try
                 {
+                    var found = new List<(int score, string name)>();
                     foreach (var n in Font.GetOSInstalledFontNames())
                     {
                         string l = n.ToLowerInvariant();
-                        if (l.Contains("cjk") && l.Contains("jp")) names.Insert(0, n);
-                        else if (l.Contains("cjk") || l.Contains("hiragino") || l.Contains("noto sans jp") || l.Contains("droidsansfallback")) names.Add(n);
+                        bool cjk = l.Contains("cjk") || l.Contains("hiragino") || l.Contains("noto sans jp");
+                        if (!cjk) continue;
+                        int score = (l.Contains("sans") || l.Contains("gothic") || l.Contains("hiragino sans") ? 4 : 0)
+                                    + (l.Contains("jp") ? 2 : 0) + (l.Contains("serif") || l.Contains("mincho") ? -8 : 0);
+                        found.Add((score, n));
                     }
+                    found.Sort((x, y) => y.score.CompareTo(x.score));
+                    foreach (var f in found) names.Add(f.name);
                 }
                 catch { /* 一覧が取れない環境 */ }
                 names.AddRange(new[] { "Noto Sans CJK JP", "NotoSansCJK-Regular", "Hiragino Sans", "Roboto", "Arial" });

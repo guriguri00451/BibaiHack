@@ -40,6 +40,9 @@ adb install -r a-kun-unity/Builds/a-kun-clay.apk
 
 初めて起動したときに「手の追跡」の許可を求められるので、許可してください。
 
+設定 (`ProjectSettings/`、`Assets/XR/`、`Assets/AKun/Settings/`、シーン) はコミット済みなので、そのままビルドできます。
+`ProjectSetup.Setup` で入力方式 (Input System) を切り替えたときは、エディタを起動し直してからビルドしてください (同じ起動のままだと「script class layout is incompatible」で失敗する)。
+
 `ProjectSetup.Setup` がすること:
 
 - Player: Android、IL2CPP / ARM64、Vulkan、Linear、最小 API 29、GameActivity、Resizeable Activity、Run In Background、Input System
