@@ -17,11 +17,14 @@ namespace Seeker.Sync
     {
         public readonly bool? isCaptured;
         public readonly int? score;
+        /// <summary>終了理由: time_up / all_caught / host。サーバーが載せなければ null。</summary>
+        public readonly string reason;
 
-        public GameResult(bool? isCaptured, int? score)
+        public GameResult(bool? isCaptured, int? score, string reason = null)
         {
             this.isCaptured = isCaptured;
             this.score = score;
+            this.reason = reason;
         }
     }
 
@@ -43,6 +46,22 @@ namespace Seeker.Sync
         /// <summary>現フェーズの終了時刻（Unix ms、サーバー時刻）。waiting では null。finished はサイクル中だけ次のラウンドの開始時刻。</summary>
         public long? PhaseEndsAtMs { get; private set; }
         public IReadOnlyList<string> Participants => participants;
+        /// <summary>自分の playerId。snapshot の payload.you.playerId。</summary>
+        public string MyPlayerId { get; private set; }
+        /// <summary>自分の累計スコア。まだ分からなければ null。</summary>
+        public int? MyScore { get; private set; }
+        /// <summary>他のケイがドロを見つけた回数。増えたら通知を出す合図。</summary>
+        public int OtherSeekerCaughtCount { get; private set; }
+
+        /// <summary>
+        /// 捕獲応答の累計 score を反映する。加算ではなく上書きなので、同じ値の player.caught が後から来ても二重にならない。
+        /// </summary>
+        public bool ApplyScore(int score)
+        {
+            if (MyScore == score) return false;
+            MyScore = score;
+            return true;
+        }
 
         /// <summary>
         /// サイクル中（rounds/start の resultSeconds）で、サーバーが次のラウンドを自分で始める予定があるか。
@@ -54,6 +73,7 @@ namespace Seeker.Sync
         /// <summary>表示に影響する変化があったら true。</summary>
         public bool Apply(ServerMessage message)
         {
+            if (message.Type == "player.caught") return ApplyPlayerCaught(message);
             var isSnapshot = message.Type == "session.snapshot";
             if (!isSnapshot && message.Type != "session.phase_changed") return false;
 
@@ -87,6 +107,7 @@ namespace Seeker.Sync
                 isChanged = true;
             }
 
+            if (isSnapshot) isChanged |= ReadMyScore(message.Payload);
             isChanged |= ReadParticipants(source["participants"] ?? message.Payload["participants"]);
             isChanged |= ReadResult(source["result"] ?? message.Payload["result"]);
             return isChanged;
@@ -101,6 +122,42 @@ namespace Seeker.Sync
             if (message.Type != "session.snapshot") return null;
             var mapId = (string)(message.Payload["session"] as JObject)?["mapId"];
             return string.IsNullOrEmpty(mapId) ? null : mapId;
+        }
+
+        // snapshot 直下に score は無い。players[] から you.playerId の行を探す
+        private bool ReadMyScore(JObject payload)
+        {
+            var myId = (string)payload["you"]?["playerId"];
+            var score = FindScore(payload["players"] as JArray, myId);
+            if (myId == MyPlayerId && score == MyScore) return false;
+            MyPlayerId = myId;
+            MyScore = score;
+            return true;
+        }
+
+        private static int? FindScore(JArray players, string playerId)
+        {
+            if (players == null || string.IsNullOrEmpty(playerId)) return null;
+            foreach (var player in players)
+            {
+                if ((string)player["playerId"] == playerId) return (int?)player["score"];
+            }
+            return null;
+        }
+
+        // 自分が見つけたなら seekerScore で上書き。他のケイなら通知だけでスコアは変えない
+        private bool ApplyPlayerCaught(ServerMessage message)
+        {
+            if (message.Round.HasValue && message.Round.Value < Round) return false;
+            var by = (string)message.Payload["byPlayerId"];
+            if (string.IsNullOrEmpty(by)) return false;
+            if (by == MyPlayerId)
+            {
+                var seekerScore = (int?)message.Payload["seekerScore"];
+                return seekerScore.HasValue && ApplyScore(seekerScore.Value);
+            }
+            OtherSeekerCaughtCount++;
+            return true;
         }
 
         // Newtonsoft は ISO 文字列を勝手に Date 型へ変えることがあるので、型に頼らず ToObject で読む
@@ -140,8 +197,8 @@ namespace Seeker.Sync
         private bool ReadResult(JToken token)
         {
             if (!(token is JObject result)) return false;
-            var next = new GameResult((bool?)result["captured"], (int?)result["score"]);
-            if (next.isCaptured == Result.isCaptured && next.score == Result.score) return false;
+            var next = new GameResult((bool?)result["captured"], (int?)result["score"], (string)result["reason"]);
+            if (next.isCaptured == Result.isCaptured && next.score == Result.score && next.reason == Result.reason) return false;
             Result = next;
             return true;
         }

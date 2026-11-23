@@ -31,6 +31,8 @@ namespace Seeker.App
         private Text mapStatusLabel;
         private PhasePanelsView phasePanels;
         private PoseSender poseSender;
+        private ScoreHudView scoreHud;
+        private int shownOtherSeekerCaughtCount;
         private const float CaptureMessageSeconds = 3f;
         private string statusBeforeTrackingLost;
         private string statusBeforeCapture;
@@ -51,6 +53,7 @@ namespace Seeker.App
             captureInput.Captured += OnCaptured;
             syncedObjects.Rejected += () => statusLabel.text = "サーバーに接続を拒否されました";
             syncedObjects.SessionChanged += RenderPhase;
+            scoreHud = new ScoreHudView(statusLabel.transform.parent);
             RenderPhase();
         }
 
@@ -77,13 +80,22 @@ namespace Seeker.App
         private void Update()
         {
             phasePanels.RenderTimer(syncedObjects.Session, syncedObjects.Clock);
+            scoreHud.Tick();
             RenderTrackingLost();
             RestoreStatusAfterCapture();
         }
 
-        // 演出・スコア HUD は後続タスク。ここでは結果を statusLabel に数秒だけ出す
         private void OnCaptured(CaptureOutcome outcome)
         {
+            if (!outcome.result.IsError)
+            {
+                // 応答の score は累計。上書きなので player.caught と重なっても二重加算しない
+                syncedObjects.Session.ApplyScore(outcome.result.Score);
+                scoreHud.Render(syncedObjects.Session.MyScore);
+                scoreHud.ShowPopup(ScoreText.CaptureFeedback(outcome.result));
+                return;
+            }
+            // エラーは演出せず statusLabel に数秒だけ出す
             if (captureMessage == null) statusBeforeCapture = statusLabel.text;
             captureMessage = outcome.result.Message;
             captureMessageHideAt = Time.unscaledTime + CaptureMessageSeconds;
@@ -115,7 +127,17 @@ namespace Seeker.App
             }
         }
 
-        private void RenderPhase() => phasePanels.Render(syncedObjects.Session);
+        private void RenderPhase()
+        {
+            var session = syncedObjects.Session;
+            phasePanels.Render(session);
+            scoreHud.Render(session.MyScore);
+            if (session.OtherSeekerCaughtCount != shownOtherSeekerCaughtCount)
+            {
+                shownOtherSeekerCaughtCount = session.OtherSeekerCaughtCount;
+                scoreHud.ShowPopup(ScoreText.OtherSeekerCaught);
+            }
+        }
 
         private void Start()
         {
