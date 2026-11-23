@@ -71,7 +71,14 @@ export const SessionDetailSchema = z
     status: SessionStatusSchema,
     round: z.int().min(1),
     mapId: z.string(),
-    phaseEndsAt: z.iso.datetime().nullable(),
+    phaseEndsAt: z.iso
+      .datetime()
+      .nullable()
+      .describe("準備中・本番中はその期限。finished で cycle があれば、次のラウンドの準備が始まる時刻"),
+    cycle: z
+      .object({ resultSeconds: z.int() })
+      .nullable()
+      .describe("null でなければ、ラウンドが終わって resultSeconds 後にサーバーが次のラウンドを始める"),
     createdAt: z.iso.datetime(),
     players: z.array(PlayerSchema),
   })
@@ -87,6 +94,12 @@ export const StartRoundRequestSchema = z
     playingSeconds: phaseSeconds
       .optional()
       .describe(`準備の期限が来てサーバーが自動で本番に入るときの長さ。省くと ${DEFAULT_PLAYING_SECONDS} 秒`),
+    resultSeconds: phaseSeconds
+      .optional()
+      .openapi({ example: 20 })
+      .describe(
+        "結果を見せる長さ。指定すると、ラウンドが終わってこの秒数で次のラウンドを同じ設定・同じ役割で自動で始める（後から入った人はケイ）。省くと次はホストが始める",
+      ),
     roles: z
       .array(z.object({ playerId: z.uuid(), role: RoleSchema }))
       .min(1)
@@ -186,11 +199,33 @@ export const MapIdParamSchema = z.object({
     .openapi({ param: { name: "mapId", in: "path" }, example: "bibai-museum" }),
 });
 
+export const MapSummarySchema = z
+  .object({
+    mapId: z.string(),
+    name: z.string(),
+    modelUrl: z.url().describe("マップの GLB（認証なしで取れる）。SPZ だけのマップでは空のシーン"),
+    splatUrl: z
+      .url()
+      .nullable()
+      .describe("マップの Gaussian Splat（SPZ v1〜4、認証なしで取れる）。無ければ null"),
+  })
+  .openapi("MapSummary");
+
+export const MapListResponseSchema = z.object({ maps: z.array(MapSummarySchema) }).openapi("MapListResponse");
+
+export const SetMapRequestSchema = z
+  .object({ mapId: z.string().regex(/^[a-z0-9-]{1,64}$/).openapi({ example: "bibai-museum" }) })
+  .openapi("SetMapRequest");
+
 export const MapDefinitionSchema = z
   .object({
     mapId: z.string(),
     name: z.string(),
-    modelUrl: z.url().describe("マップの GLB（認証なしで取れる）"),
+    modelUrl: z.url().describe("マップの GLB（認証なしで取れる）。SPZ だけのマップでは空のシーン"),
+    splatUrl: z
+      .url()
+      .nullable()
+      .describe("マップの Gaussian Splat（SPZ v1〜4、認証なしで取れる）。無ければ null"),
     transform: TransformSchema.describe("マップの GLB を共有マップ座標に置く Transform"),
   })
   .openapi("MapDefinition");

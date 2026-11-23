@@ -19,6 +19,7 @@ namespace Seeker.App
         private readonly Text finishedBody;
         private readonly TimerHudView playingTimer;
         private readonly TimerHudView preparingTimer;
+        private readonly Text nextRoundLabel;
 
         public PhasePanelsView(Transform canvas, GameObject playingHud)
         {
@@ -30,6 +31,7 @@ namespace Seeker.App
             // playing HUD（ステータス帯）の直下に出す。帯は上端から 120 + 高さ 120 の位置
             playingTimer = new TimerHudView(CreateTimerText(playingHud.transform, new Vector2(0.5f, 0f), 96));
             finishedBody = CreateFullScreenPanel(canvas, GamePhase.Finished, "結果");
+            nextRoundLabel = CreateTimerText(finishedBody.transform.parent, new Vector2(0.5f, 0.25f), 56);
         }
 
         public void Render(GameSessionState session)
@@ -51,6 +53,7 @@ namespace Seeker.App
         {
             if (session.Phase == GamePhase.Playing) playingTimer.Render(session, clock);
             else if (session.Phase == GamePhase.Preparing) preparingTimer.Render(session, clock);
+            else if (session.Phase == GamePhase.Finished) nextRoundLabel.text = BuildNextRoundText(session, clock);
         }
 
         private static Text CreateTimerText(Transform parent, Vector2 anchor, int fontSize)
@@ -71,6 +74,12 @@ namespace Seeker.App
             // 親（半透明の黒帯）の外へ出てもタップを奪わない
             text.raycastTarget = false;
             return text;
+        }
+
+        private static string BuildNextRoundText(GameSessionState session, ServerClock clock)
+        {
+            long? remaining = session.IsNextRoundScheduled ? clock.RemainingMs(session.PhaseEndsAtMs.Value) : (long?)null;
+            return TimerFormat.FormatNextRound(remaining);
         }
 
         public static string BuildWaitingText(IReadOnlyList<string> participants)

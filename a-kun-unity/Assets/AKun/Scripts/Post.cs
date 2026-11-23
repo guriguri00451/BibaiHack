@@ -97,9 +97,16 @@ namespace AKun
                 new ButtonDef { id = "phase", label = PhaseLine, x = 0, y = 0, w = gw, h = gh },
                 new ButtonDef { id = "me", label = MeLine, x = 0, y = -(gh + gap), w = gw, h = gh },
                 new ButtonDef { id = "people", label = PeopleLine, x = 0, y = -2 * (gh + gap), w = gw, h = gh },
+                // マップ: ホストは待機中とラウンドの終わった後に押して次のマップにする (ケイ側は選ばない。サーバーから届く)
                 new ButtonDef
                 {
-                    id = "host", x = 0, y = -3 * (gh + gap) - 0.006f, w = gw, h = 0.04f, color = "#4fc3f7",
+                    id = "map", label = MapLine, x = 0, y = -3 * (gh + gap), w = gw, h = gh,
+                    onPress = () => { if (Server != null) _ = Server.NextMap(); },
+                    isEnabled = () => Server != null && Server.CanChangeMap && !busy && !Choosing,
+                },
+                new ButtonDef
+                {
+                    id = "host", x = 0, y = -4 * (gh + gap) - 0.006f, w = gw, h = 0.04f, color = "#4fc3f7",
                     label = HostLabel, onPress = HostAction,
                     isEnabled = () => Server != null && Server.game.IsHost && !Server.PhaseBusy && !busy && !Choosing,
                 },
@@ -116,7 +123,9 @@ namespace AKun
             if (s == null) return "";
             var g = s.game;
             var rem = g.Remaining(DateTime.UtcNow);
-            string left = rem != null ? $" · 残り {(int)rem.Value / 60}:{(int)rem.Value % 60:00}" : "";
+            // 終わった後の期限は、サーバーが次のラウンドを始める時刻
+            string until = g.status == GameState.FINISHED ? "次まで" : "残り";
+            string left = rem != null ? $" · {until} {(int)rem.Value / 60}:{(int)rem.Value % 60:00}" : "";
             string conn = s.Connected ? "" : " · 切断中";
             return $"ラウンド {g.round} · {GameState.PhaseName(g.status)}{left}{conn}";
         }
@@ -135,6 +144,18 @@ namespace AKun
             if (s == null) return "";
             var g = s.game;
             return $"参加 {g.players.Count} 人 (ケイ {g.Count("seeker")}) · 部屋 {ServerTarget.Short(g.sessionId)}";
+        }
+
+        string MapLine()
+        {
+            var s = Server;
+            if (s == null) return "";
+            string name = s.MapName(s.game.mapId);
+            if (!s.game.IsHost || s.maps.Count <= 1) return $"マップ: {name}";
+            if (s.MapBusy) return $"マップ: {name} (替えています…)";
+            if (!s.CanChangeMap) return $"マップ: {name}";
+            int i = s.maps.FindIndex(m => m.id == s.game.mapId);
+            return $"マップ: {name} ({i + 1}/{s.maps.Count}) ▶ 次へ";
         }
 
         string HostLabel()
@@ -373,18 +394,22 @@ namespace AKun
 
         // ---------- サーバー ----------
         // room: 入るセッションの ID。空なら部屋を作ってホストになる (ID はログと files/session.txt に出す)
-        public async void Connect(string server, string room, string name, string mapId, double preparingSeconds, double playingSeconds)
+        public async void Connect(string server, string room, string name, string mapId, double preparingSeconds, double playingSeconds, double resultSeconds)
         {
             busy = true;
             ServerTarget t = null;
             try
             {
-                t = new ServerTarget(server.Trim(), app.Log) { preparingSeconds = preparingSeconds, playingSeconds = playingSeconds };
+                t = new ServerTarget(server.Trim(), app.Log)
+                {
+                    preparingSeconds = preparingSeconds, playingSeconds = playingSeconds, resultSeconds = resultSeconds,
+                };
                 await t.Connect(room?.Trim(), name, mapId);
+                await t.LoadMaps();
                 SwitchTarget(t);
                 var g = t.game;
                 app.Log(g.IsHost
-                    ? $"部屋を作りました ({ServerTarget.Short(g.sessionId)}…)。ケイが入ったら「準備をはじめる」"
+                    ? $"部屋を作りました ({ServerTarget.Short(g.sessionId)}…)。マップを選んで、ケイが入ったら「準備をはじめる」"
                     : $"部屋に入りました ({ServerTarget.Short(g.sessionId)}…)。ホストが始めるのを待ちます");
                 app.hud.Toast(g.IsHost ? "部屋を作りました" : "部屋に入りました", Hud.INFO);
                 Sfx.Play("chime");

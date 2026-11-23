@@ -3,6 +3,8 @@ import { HTTPException } from "hono/http-exception";
 import type { Db } from "../db/client.ts";
 import { RateLimitError } from "../game/service.ts";
 import { buildServices, type Services } from "../services.ts";
+import type { AdminAccess } from "../config.ts";
+import { registerAdminRoutes } from "./admin.ts";
 import { ApiError, errorBody } from "./errors.ts";
 import { registerRoutes } from "./routes.ts";
 
@@ -12,6 +14,8 @@ export type AppDeps = {
   publicUrl?: string;
   assetBaseUrl?: string;
   basePath?: string;
+  /** 管理画面の入り方。無ければ管理画面は閉じる */
+  admin?: AdminAccess;
 } & Partial<Services>;
 
 /** deps が無ければ /healthz だけの app（テスト用）。サービスが無ければここで作る */
@@ -45,6 +49,7 @@ export function createApp(deps?: AppDeps) {
   if (deps) {
     const services = deps.game ? (deps as AppDeps & Services) : { ...deps, ...buildServices(deps) };
     registerRoutes(app, services);
+    registerAdminRoutes(app, { ...services, admin: deps.admin ?? { open: false } });
   }
 
   return app;

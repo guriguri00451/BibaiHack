@@ -23,6 +23,30 @@ namespace Seeker.Ar.Tests
         }
 
         [Test]
+        public void Parse_ReadsSplatUrl()
+        {
+            var definition = MapDefinition.Parse("{\"modelUrl\":\"a.glb\",\"splatUrl\":\"https://h/v1/maps/z/splat.spz?v=1\"}");
+
+            Assert.That(definition.splatUrl, Is.EqualTo("https://h/v1/maps/z/splat.spz?v=1"));
+        }
+
+        [Test]
+        public void Parse_AcceptsSplatOnlyMap()
+        {
+            var definition = MapDefinition.Parse("{\"splatUrl\":\"https://h/v1/maps/z/splat.spz\"}");
+
+            Assert.That(definition.HasSplat, Is.True);
+        }
+
+        [Test]
+        public void HasSplat_ReturnsFalse_WhenSplatUrlIsNull()
+        {
+            var definition = MapDefinition.Parse("{\"modelUrl\":\"a.glb\",\"splatUrl\":null}");
+
+            Assert.That(definition.HasSplat, Is.False);
+        }
+
+        [Test]
         public void ToMapTransform_ReadsPositionAndScale()
         {
             var map = MapDefinition.Parse(FullJson).ToMapTransform();

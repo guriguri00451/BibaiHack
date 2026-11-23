@@ -14,15 +14,21 @@ namespace Seeker.Ar
         public string name;
         /// <summary>GLB の URL。相対パスなら呼び出し側が StreamingAssets 配下として解決する。</summary>
         public string modelUrl;
+        /// <summary>Gaussian Splat（SPZ）の URL。無いマップは null。ゾーンのマップは SPZ だけで、modelUrl は空のシーン。</summary>
+        public string splatUrl;
         public TransformJson transform;
 
         public static MapDefinition Parse(string json)
         {
             var definition = JsonUtility.FromJson<MapDefinition>(json);
-            if (definition == null || string.IsNullOrEmpty(definition.modelUrl))
-                throw new FormatException("map definition has no modelUrl");
+            if (definition == null || (string.IsNullOrEmpty(definition.modelUrl) && string.IsNullOrEmpty(definition.splatUrl)))
+                throw new FormatException("map definition has neither modelUrl nor splatUrl");
             return definition;
         }
+
+        public bool HasModel => !string.IsNullOrEmpty(modelUrl);
+
+        public bool HasSplat => !string.IsNullOrEmpty(splatUrl);
 
         /// <summary>transform が省略されたマップは、マップ原点にそのまま置く。</summary>
         public MapTransform ToMapTransform() => transform?.ToMapTransform() ?? MapTransform.Identity;

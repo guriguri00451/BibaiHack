@@ -20,7 +20,15 @@ export type Config = {
   storageDir?: string;
   /** S3 互換ストレージ（GLB の置き場）。S3_* がそろっていなければ undefined（サーバー自身が受ける） */
   s3?: S3Config;
+  /** 管理画面（/admin、/v1/admin/*）の入り方 */
+  admin: AdminAccess;
 };
+
+/**
+ * token: このトークンを Bearer で送れば入れる。
+ * token が無いとき、開発時（NODE_ENV が production でない）は誰でも入れ、本番では管理画面を閉じる
+ */
+export type AdminAccess = { token?: string; open: boolean };
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
   const port = Number(env.PORT ?? 8080);
@@ -54,7 +62,22 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     storageDir: env.STORAGE_DIR || undefined,
     jwtSecret,
     s3: loadS3Config(env),
+    admin: loadAdminAccess(env),
   };
+}
+
+function loadAdminAccess(env: Record<string, string | undefined>): AdminAccess {
+  const token = env.ADMIN_TOKEN || undefined;
+  if (token) {
+    if (token.length < 16) throw new Error("ADMIN_TOKEN は16文字以上にしてください");
+    return { token, open: false };
+  }
+  if (env.NODE_ENV === "production") {
+    console.warn("ADMIN_TOKEN が未設定のため、管理画面は使えません");
+    return { open: false };
+  }
+  console.warn("ADMIN_TOKEN が未設定のため、管理画面は誰でも使えます（開発用）");
+  return { open: true };
 }
 
 function loadS3Config(env: Record<string, string | undefined>): S3Config | undefined {

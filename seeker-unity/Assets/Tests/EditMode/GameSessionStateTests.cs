@@ -112,6 +112,38 @@ namespace Seeker.Ar.Tests
             Assert.That(state.Phase, Is.EqualTo(GamePhase.Waiting));
         }
 
+        [Test]
+        public void ReadMapId_ReturnsSessionMapId_FromSnapshot()
+        {
+            var message = Message("session.snapshot", 1, "{\"session\":{\"status\":\"waiting\",\"mapId\":\"bibai-museum\"}}");
+
+            Assert.That(GameSessionState.ReadMapId(message), Is.EqualTo("bibai-museum"));
+        }
+
+        [Test]
+        public void ReadMapId_ReturnsNull_ForNonSnapshotMessage()
+        {
+            var message = Message("session.phase_changed", 1, "{\"session\":{\"mapId\":\"bibai-museum\"}}");
+
+            Assert.That(GameSessionState.ReadMapId(message), Is.Null);
+        }
+
+        [Test]
+        public void ReadMapId_ReturnsNull_WhenSnapshotHasNoSession()
+        {
+            var message = Message("session.snapshot", 1, "{\"status\":\"waiting\"}");
+
+            Assert.That(GameSessionState.ReadMapId(message), Is.Null);
+        }
+
+        [Test]
+        public void ReadMapId_ReturnsNull_WhenMapIdIsEmpty()
+        {
+            var message = Message("session.snapshot", 1, "{\"session\":{\"mapId\":\"\"}}");
+
+            Assert.That(GameSessionState.ReadMapId(message), Is.Null);
+        }
+
         private static ServerMessage Raw(string json) => ServerMessage.Parse(json);
 
         private const string RealSnapshot =
@@ -178,6 +210,119 @@ namespace Seeker.Ar.Tests
             clock.RemainingMs(state.PhaseEndsAtMs.Value);
 
             Assert.That(state.Phase, Is.EqualTo(GamePhase.Playing));
+        }
+
+        // ---- サイクル（rounds/start の resultSeconds）: server/README.md「ゲームの進み方」 ----
+
+        private static string CycleSnapshot(long round, string status, string phaseEndsAt) =>
+            $"{{\"type\":\"session.snapshot\",\"round\":{round},\"seq\":0,\"timestamp\":1,\"payload\":{{\"session\":{{\"status\":\"{status}\",\"round\":{round},\"mapId\":\"m\",\"phaseEndsAt\":{phaseEndsAt}}},\"players\":[],\"objects\":[]}}}}";
+
+        private static GameSessionState FinishedInCycle()
+        {
+            var state = new GameSessionState();
+            state.Apply(Message("session.phase_changed", 1, "{\"status\":\"finished\",\"phaseEndsAt\":\"2026-01-01T00:00:10.000Z\",\"result\":{\"captured\":true,\"score\":30}}"));
+            return state;
+        }
+
+        [Test]
+        public void IsNextRoundScheduled_IsTrue_WhenFinishedHasPhaseEndsAt()
+        {
+            var state = FinishedInCycle();
+
+            Assert.That(state.IsNextRoundScheduled, Is.True);
+        }
+
+        [Test]
+        public void IsNextRoundScheduled_IsFalse_WhenFinishedWithoutCycle()
+        {
+            var state = new GameSessionState();
+
+            state.Apply(Message("session.phase_changed", 1, "{\"status\":\"finished\",\"phaseEndsAt\":null}"));
+
+            Assert.That(state.IsNextRoundScheduled, Is.False);
+        }
+
+        [Test]
+        public void IsNextRoundScheduled_IsFalse_WhilePlaying()
+        {
+            var state = new GameSessionState();
+
+            state.Apply(Raw(RealSnapshot));
+
+            Assert.That(state.IsNextRoundScheduled, Is.False);
+        }
+
+        [Test]
+        public void Apply_ReportsChange_WhenCycleStopSnapshotClearsPhaseEndsAt()
+        {
+            var state = FinishedInCycle();
+
+            var isChanged = state.Apply(Raw(CycleSnapshot(1, "finished", "null")));
+
+            Assert.That(isChanged, Is.True);
+        }
+
+        [Test]
+        public void Apply_StopsSchedulingNextRound_OnCycleStopSnapshot()
+        {
+            var state = FinishedInCycle();
+
+            state.Apply(Raw(CycleSnapshot(1, "finished", "null")));
+
+            Assert.That(state.IsNextRoundScheduled, Is.False);
+        }
+
+        [Test]
+        public void Apply_KeepsResult_OnCycleStopSnapshot()
+        {
+            // 停止の snapshot には result が無い。同じラウンドなので結果は出したまま
+            var state = FinishedInCycle();
+
+            state.Apply(Raw(CycleSnapshot(1, "finished", "null")));
+
+            Assert.That(state.Result.score, Is.EqualTo(30));
+        }
+
+        [Test]
+        public void Apply_ClearsResult_WhenCycleStartsNextRound()
+        {
+            var state = FinishedInCycle();
+
+            state.Apply(Message("session.phase_changed", 2, "{\"status\":\"preparing\",\"round\":2,\"phaseEndsAt\":\"2026-01-01T00:01:00.000Z\"}"));
+
+            Assert.That(state.Result.score, Is.Null);
+        }
+
+        [Test]
+        public void Apply_EntersPreparingOfNextRound_WhenCycleStartsNextRound()
+        {
+            var state = FinishedInCycle();
+
+            state.Apply(Message("session.phase_changed", 2, "{\"status\":\"preparing\",\"round\":2,\"phaseEndsAt\":\"2026-01-01T00:01:00.000Z\"}"));
+
+            Assert.That((state.Phase, state.Round), Is.EqualTo((GamePhase.Preparing, 2L)));
+        }
+
+        [Test]
+        public void Apply_EntersNextRound_WhenOnlySnapshotArrives()
+        {
+            // phase_changed を取りこぼしても、送り直される snapshot だけで次のラウンドに入る
+            var state = FinishedInCycle();
+
+            state.Apply(Raw(CycleSnapshot(2, "preparing", "\"2026-01-01T00:01:00.000Z\"")));
+
+            Assert.That((state.Phase, state.Round, state.Result.score), Is.EqualTo((GamePhase.Preparing, 2L, (int?)null)));
+        }
+
+        [Test]
+        public void Apply_SchedulesNextRound_ForLateJoinerSnapshot()
+        {
+            // 後から入った人は finished の snapshot だけを受け取る（result 無し）
+            var state = new GameSessionState();
+
+            state.Apply(Raw(CycleSnapshot(3, "finished", "\"2026-01-01T00:00:10.000Z\"")));
+
+            Assert.That(state.IsNextRoundScheduled, Is.True);
         }
     }
 }

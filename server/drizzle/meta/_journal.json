@@ -8,6 +8,20 @@
       "when": 1795368869244,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795397789477,
+      "tag": "0001_maps_and_cycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795398894196,
+      "tag": "0002_maps_splat",
+      "breakpoints": true
     }
   ]
 }

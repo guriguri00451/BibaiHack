@@ -1,3 +1,4 @@
+import type { AdminAccess } from "../src/config.ts";
 import { openDb } from "../src/db/client.ts";
 import { createServer } from "../src/server.ts";
 import type { AssetStorage } from "../src/storage/assets.ts";
@@ -7,7 +8,7 @@ export const JWT_SECRET = "test-secret";
 
 /** PGlite 上でサーバーを起動する。テストファイルの先頭で await し、afterAll で stop を呼ぶ */
 export async function startServer(
-  opts: { basePath?: string; storage?: ObjectStorage; assetStorage?: AssetStorage } = {},
+  opts: { basePath?: string; storage?: ObjectStorage; assetStorage?: AssetStorage; admin?: AdminAccess } = {},
 ) {
   const { db, close } = await openDb({});
   const srv = createServer({
@@ -16,6 +17,7 @@ export async function startServer(
     basePath: opts.basePath,
     storage: opts.storage,
     assetStorage: opts.assetStorage,
+    admin: opts.admin,
   });
   const server = Bun.serve({ port: 0, fetch: srv.fetch, websocket: srv.websocket });
   const base = `http://localhost:${server.port}${opts.basePath ?? ""}`;
@@ -125,6 +127,17 @@ export async function startServer(
 export function fakeGlb(size = 64): Uint8Array {
   const b = new Uint8Array(size);
   b.set([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0]);
+  return b;
+}
+
+/** SPZ v4 の形のヘッダだけ持つ偽物（"NGSP"・版・点の数・SH 次数） */
+export function fakeSpz(size = 64, opts: { version?: number; points?: number; shDegree?: number } = {}): Uint8Array {
+  const b = new Uint8Array(size);
+  const v = new DataView(b.buffer);
+  v.setUint32(0, 0x5053474e, true);
+  v.setUint32(4, opts.version ?? 4, true);
+  v.setUint32(8, opts.points ?? 1000, true);
+  v.setUint8(12, opts.shDegree ?? 3);
   return b;
 }
 

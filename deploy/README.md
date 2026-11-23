@@ -74,15 +74,28 @@ deploy/db.sh psql dev 'select count(*) from users'
 - `copy` の元は止めない（`pg_dump` は一貫したスナップショットを取る）
 - 複製した先では、元の環境のトークンは使えない（`JWT_SECRET` が違う）。ゲスト作成からやり直す
 - `deploy/backups/` は git に入らない。書き出しは towa-mini に残る
+- `reset` / `copy` / `restore` は管理画面から登録したマップ（ゾーンの SPZ を含む）の行も書き換える。ゾーンは `deploy/zones.sh register <環境>` で登録し直す（[`docs/stage-zones.md`](../docs/stage-zones.md)）
 - 古いブランチの DB を新しいブランチに複製した場合、デプロイ（または `reset` 後の起動）で足りないマイグレーションが当たる。逆に、新しいマイグレーションが当たった DB を古いブランチで動かすと壊れることがある
+
+## ステージ（ゾーンの SPZ）
+
+美唄のゾーン（`bibai-zone-a`〜`h`・`rest`）は全環境に登録してある。URL・登録し直し方は [`docs/stage-zones.md`](../docs/stage-zones.md)。
+
+```bash
+deploy/zones.sh list so-ma-01                # その環境のゾーンと URL
+deploy/zones.sh register so-ma-01            # 1つの環境に登録（登録済みは飛ばす）
+deploy/zones.sh register all --yes-prod      # 全環境
+deploy/zones.sh push <ディレクトリ>           # ゾーンを作り直したら先に VM へ送る
+```
 
 ## 環境を増やす・減らす
 
 1. `deploy/envs.txt` に名前を足す（英小文字・数字・ハイフン）
 2. `deploy/render.sh` で `compose.yaml` と `cloudflared/config.yml` を作り直してコミット
 3. `deploy/deploy.sh <新しい環境> <ブランチ>`
+4. `deploy/zones.sh register <新しい環境>` でゾーンを登録する
 
-足りない `JWT_SECRET_*` はデプロイ時に VM 上で作られる。トンネルの設定が変わると cloudflared が再起動する（全環境が数秒切れる）。
+足りない `JWT_SECRET_*`・`ADMIN_TOKEN` はデプロイ時に VM 上で作られる。トンネルの設定が変わると cloudflared が再起動する（全環境が数秒切れる）。
 減らすときは `envs.txt` から消して render → 残っている環境のどれかをデプロイし、VM で `docker compose up -d --remove-orphans` を実行する。DB は残るので、要らなければ `db.sh psql` で `DROP DATABASE`。
 
 ## VM の中
@@ -92,10 +105,13 @@ deploy/db.sh psql dev 'select count(*) from users'
   compose.yaml               deploy/compose.yaml の写し（生成物）
   cloudflared/config.yml     トンネルの振り分け（生成物）
   cloudflared/credentials.json  トンネルの秘密鍵（リポジトリに入れない）
-  .env                       POSTGRES_PASSWORD と JWT_SECRET_*（VM 上でだけ生成。mode 600）
+  .env                       POSTGRES_PASSWORD・JWT_SECRET_*・ADMIN_TOKEN（VM 上でだけ生成。mode 600）
   envs/<環境>/server/          デプロイしたソース
   envs/<環境>/DEPLOYED         入っているブランチ・コミット・日時・実行者
+  incoming/zones_wide/       ゾーンの SPZ と zones.json（deploy/zones.sh push で送る。登録の元）
 ```
+
+管理画面（`https://bibai.t0waxx.com/<環境>/admin`、prod は `/admin`）のトークンは全環境で共通の `ADMIN_TOKEN`。見るには `ssh -J root@wds-pve towa@192.168.11.2 grep ADMIN_TOKEN /opt/bibai/.env`。
 
 VM に入る：`ssh -J root@wds-pve towa@192.168.11.2`（VM は tailnet に居ない。IP は DHCP なので変わることがある。変わったら `BIBAI_VM=towa@<新しいIP>` を付けて実行する）
 

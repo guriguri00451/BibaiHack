@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>美唄 管理画面</title>
+<script type="module" src="https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --text: #1d2026; --muted: #6b7280; --line: #e5e7eb;
+    --accent: #0284c7; --accent-text: #fff; --danger: #dc2626; --ok: #16a34a; --warn: #d97706;
+    --chip: #eef2f7; --input: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171c; --panel: #1d2026; --text: #e6e8ec; --muted: #9aa1ad; --line: #2c313a;
+      --accent: #38bdf8; --accent-text: #0b1220; --danger: #f87171; --ok: #4ade80; --warn: #fbbf24;
+      --chip: #272c35; --input: #15171c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+  header h1 { font-size: 16px; margin: 0; }
+  header .env { color: var(--muted); font-size: 12px; }
+  header .spacer { flex: 1; }
+  nav { display: flex; gap: 4px; }
+  nav button { background: none; border: 0; color: var(--muted); padding: 6px 10px; border-radius: 6px; cursor: pointer; font: inherit; }
+  nav button.on { background: var(--chip); color: var(--text); font-weight: 600; }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  section { display: none; }
+  section.on { display: block; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  input, select { font: inherit; color: var(--text); background: var(--input); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+  input[type=number] { width: 76px; }
+  input[type=file] { max-width: 240px; }
+  button.b { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 6px; padding: 5px 10px; cursor: pointer; white-space: nowrap; }
+  button.b:hover { border-color: var(--accent); }
+  button.b.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button.b.danger { color: var(--danger); }
+  button.b:disabled { opacity: .5; cursor: default; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; color: var(--muted); font-weight: 500; }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--chip); font-size: 12px; white-space: nowrap; }
+  .st-waiting { color: var(--muted); }
+  .st-preparing { color: var(--warn); }
+  .st-playing { color: var(--ok); }
+  .st-finished { color: var(--accent); }
+  .players { display: flex; flex-direction: column; gap: 2px; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--line); margin-right: 4px; vertical-align: middle; }
+  .dot.on { background: var(--ok); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .maps { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+  model-viewer { width: 100%; height: 220px; background: var(--chip); border-radius: 8px; }
+  .tf { display: grid; grid-template-columns: 52px repeat(3, 1fr); gap: 4px 6px; align-items: center; margin: 8px 0; }
+  .tf input { width: 100%; }
+  #toast { position: fixed; right: 16px; bottom: 16px; max-width: 420px; padding: 10px 14px; border-radius: 8px; background: var(--text); color: var(--bg); opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 5; }
+  #toast.show { opacity: 1; }
+  #toast.err { background: var(--danger); color: #fff; }
+  .login { max-width: 420px; margin: 60px auto; }
+  .tablewrap { overflow-x: auto; }
+  @media (max-width: 640px) { header { gap: 8px; } th:nth-child(3), td:nth-child(3) { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>美唄 管理画面</h1>
+  <span class="env" id="env"></span>
+  <nav id="tabs">
+    <button data-tab="sessions" class="on">セッション</button>
+    <button data-tab="maps">マップ</button>
+  </nav>
+  <span class="spacer"></span>
+  <span class="small muted" id="who"></span>
+  <button class="b" id="logout" hidden>トークンを消す</button>
+</header>
+
+<div class="login card" id="login" hidden>
+  <h2>管理用のトークン</h2>
+  <p class="muted small">サーバーの環境変数 <span class="mono">ADMIN_TOKEN</span> の値です。このブラウザに保存されます。</p>
+  <form class="row" id="loginForm">
+    <input type="password" id="token" placeholder="ADMIN_TOKEN" style="flex:1" autocomplete="current-password">
+    <button class="b primary">入る</button>
+  </form>
+</div>
+
+<main id="app" hidden>
+  <section id="sessions" class="on">
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="margin:0">セッション</h2>
+        <span class="small muted" id="sessUpdated"></span>
+      </div>
+      <p class="small muted" style="margin:6px 0 0">新しい順に 50 件。3 秒ごとに更新します。「自動」はラウンドが終わってから次のラウンドを始めるまでの秒数です。</p>
+    </div>
+    <div class="card tablewrap">
+      <table>
+        <thead><tr><th>部屋</th><th>状態</th><th>マップ</th><th>参加者</th><th>操作</th></tr></thead>
+        <tbody id="sessRows"><tr><td colspan="5" class="muted">読み込み中…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="maps">
+    <div class="card">
+      <h2>マップを登録する</h2>
+      <p class="small muted" style="margin-top:0">同じ ID で送ると差し替えます（ファイルを空にすると名前と置き方だけ変えます）。GLB と SPZ（Gaussian Splat）のどちらか一方があれば登録できます。Unity のホストは、部屋を作ったあと「準備をはじめる」前に、この一覧から選べます。</p>
+      <form id="mapForm">
+        <div class="row">
+          <input name="mapId" placeholder="ID（例 bibai-station）" pattern="[a-z0-9\-]{1,64}" required>
+          <input name="name" placeholder="名前（例 美唄駅）">
+        </div>
+        <div class="row">
+          <label class="small">GLB <input name="model" type="file" accept=".glb,model/gltf-binary"></label>
+          <label class="small">SPZ <input name="splat" type="file" accept=".spz"></label>
+        </div>
+        <div class="tf" data-tf></div>
+        <button class="b primary" id="mapSubmit">登録する</button>
+        <span class="small muted" id="mapProgress"></span>
+      </form>
+    </div>
+    <div class="maps" id="mapList"></div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script>
+const root = location.pathname.replace(/admin\/?$/, "");
+const API = root + "v1/admin";
+document.getElementById("env").textContent = location.host + root.replace(/\/$/, "");
+let token = localStorage.getItem("bibai-admin-token") || "";
+let maps = [];
+let clockOffset = 0;
+
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+function toast(msg, err = false) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.className = "show" + (err ? " err" : "");
+  clearTimeout(t._h);
+  t._h = setTimeout(() => (t.className = ""), err ? 5000 : 2200);
+}
+
+async function api(method, path, body) {
+  const headers = token ? { authorization: "Bearer " + token } : {};
+  let payload = body;
+  if (body && !(body instanceof FormData)) { headers["content-type"] = "application/json"; payload = JSON.stringify(body); }
+  const res = await fetch(API + path, { method, headers, body: payload });
+  if (res.status === 401) { showLogin(); throw new Error("トークンが違います"); }
+  const text = await res.text();
+  const json = text ? JSON.parse(text) : null;
+  if (!res.ok) throw Object.assign(new Error(json?.error?.message || `${res.status}`), { status: res.status });
+  return json;
+}
+
+function showLogin() { $("#login").hidden = false; $("#app").hidden = true; $("#logout").hidden = true; }
+
+async function enter() {
+  try {
+    const r = await api("GET", "/whoami");
+    $("#login").hidden = true; $("#app").hidden = false;
+    $("#logout").hidden = r.open;
+    $("#who").textContent = r.open ? "トークンなし（開発用）" : "";
+    await loadMaps();
+    await loadSessions();
+  } catch (e) {
+    if (e.status === 404) { document.body.innerHTML = '<p class="login">この環境では管理画面が無効です（ADMIN_TOKEN が未設定）。</p>'; return; }
+    showLogin();
+  }
+}
+
+$("#loginForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  token = $("#token").value.trim();
+  localStorage.setItem("bibai-admin-token", token);
+  enter();
+});
+$("#logout").addEventListener("click", () => { localStorage.removeItem("bibai-admin-token"); token = ""; showLogin(); });
+
+for (const b of document.querySelectorAll("#tabs button")) {
+  b.addEventListener("click", () => {
+    for (const x of document.querySelectorAll("#tabs button")) x.classList.toggle("on", x === b);
+    for (const s of document.querySelectorAll("section")) s.classList.toggle("on", s.id === b.dataset.tab);
+  });
+}
+
+// ---------- セッション ----------
+const STATUS = { waiting: "待機中", preparing: "準備中", playing: "本番中", finished: "終了" };
+const ROLE = { hider: "ドロ", seeker: "ケイ" };
+let sessions = [];
+let editingMap = null; // マップの選択を開いている間は表を描き直さない
+
+async function loadSessions() {
+  try {
+    const r = await api("GET", "/sessions?limit=50");
+    clockOffset = Date.parse(r.now) - Date.now();
+    sessions = r.sessions;
+    if (!editingMap) renderSessions();
+    $("#sessUpdated").textContent = "更新 " + new Date().toLocaleTimeString();
+  } catch (e) { $("#sessUpdated").textContent = "更新に失敗: " + e.message; }
+}
+
+function remaining(s) {
+  if (!s.phaseEndsAt) return "";
+  const sec = Math.max(0, Math.round((Date.parse(s.phaseEndsAt) - (Date.now() + clockOffset)) / 1000));
+  const t = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+  return s.status === "finished" ? `次まで ${t}` : `残り ${t}`;
+}
+
+function renderSessions() {
+  const tb = $("#sessRows");
+  if (!sessions.length) { tb.innerHTML = '<tr><td colspan="5" class="muted">まだセッションがありません</td></tr>'; return; }
+  tb.innerHTML = sessions.map((s) => {
+    const canMap = s.status === "waiting" || s.status === "finished";
+    const mapOpts = maps.map((m) => `<option value="${esc(m.mapId)}" ${m.mapId === s.mapId ? "selected" : ""}>${esc(m.name)}</option>`).join("");
+    const known = maps.some((m) => m.mapId === s.mapId);
+    const ops = [];
+    if (canMap) ops.push(`<button class="b primary" data-act="start" data-id="${s.id}">${s.status === "waiting" ? "ラウンドを始める" : "次のラウンドを今すぐ"}</button>`);
+    if (s.status === "preparing") ops.push(`<button class="b primary" data-act="play" data-id="${s.id}">本番へ</button>`);
+    if (s.status === "preparing" || s.status === "playing") ops.push(`<button class="b" data-act="finish" data-id="${s.id}">終える</button>`);
+    if (s.cycle) ops.push(`<button class="b danger" data-act="stop-cycle" data-id="${s.id}">自動を止める</button>`);
+    const players = s.players.map((p) => `<span><span class="dot ${p.connected ? "on" : ""}"></span>${esc(p.name)} <span class="muted small">${ROLE[p.role] ?? "-"} · ${p.score}点${p.isCaught ? " · 見つかった" : ""}</span></span>`).join("");
+    return `<tr>
+      <td><span class="mono" title="${s.id}">${s.id.slice(0, 8)}</span> <button class="b small" data-copy="${s.id}">コピー</button><div class="small muted">${new Date(s.createdAt).toLocaleString()}</div></td>
+      <td><span class="chip st-${s.status}">${STATUS[s.status]}</span> <span class="small">R${s.round}</span><div class="small muted" data-rem="${s.id}">${remaining(s)}</div>${s.cycle ? `<div class="small muted">自動 ${s.cycle.resultSeconds}秒</div>` : ""}</td>
+      <td>${canMap
+        ? `<select data-map="${s.id}">${known ? "" : `<option selected>${esc(s.mapId)}（無い）</option>`}${mapOpts}</select>`
+        : `<span>${esc(maps.find((m) => m.mapId === s.mapId)?.name ?? s.mapId)}</span>`}</td>
+      <td><div class="players">${players || '<span class="muted">-</span>'}</div></td>
+      <td><div class="row">${ops.join("")}</div></td>
+    </tr>`;
+  }).join("");
+}
+
+$("#sessRows").addEventListener("click", async (e) => {
+  const copy = e.target.closest("[data-copy]");
+  if (copy) { await navigator.clipboard.writeText(copy.dataset.copy); toast("部屋の ID をコピーしました"); return; }
+  const b = e.target.closest("[data-act]");
+  if (!b) return;
+  b.disabled = true;
+  try { await api("POST", `/sessions/${b.dataset.id}/${b.dataset.act}`); toast("送りました"); }
+  catch (err) { toast(err.message, true); }
+  await loadSessions();
+});
+$("#sessRows").addEventListener("focusin", (e) => { if (e.target.matches("select[data-map]")) editingMap = e.target.dataset.map; });
+$("#sessRows").addEventListener("focusout", (e) => { if (e.target.matches("select[data-map]")) editingMap = null; });
+$("#sessRows").addEventListener("change", async (e) => {
+  const sel = e.target.closest("select[data-map]");
+  if (!sel) return;
+  try { await api("PUT", `/sessions/${sel.dataset.map}/map`, { mapId: sel.value }); toast("マップを替えました"); }
+  catch (err) { toast(err.message, true); }
+  editingMap = null;
+  sel.blur();
+  await loadSessions();
+});
+
+setInterval(() => { if (!$("#app").hidden) loadSessions(); }, 3000);
+setInterval(() => {
+  for (const s of sessions) { const el = document.querySelector(`[data-rem="${s.id}"]`); if (el) el.textContent = remaining(s); }
+}, 500);
+
+// ---------- マップ ----------
+const deg = Math.PI / 180;
+function eulerToQuat([x, y, z]) { // 度、XYZ の順
+  const [cx, sx, cy, sy, cz, sz] = [Math.cos(x * deg / 2), Math.sin(x * deg / 2), Math.cos(y * deg / 2), Math.sin(y * deg / 2), Math.cos(z * deg / 2), Math.sin(z * deg / 2)];
+  return [sx * cy * cz + cx * sy * sz, cx * sy * cz - sx * cy * sz, cx * cy * sz + sx * sy * cz, cx * cy * cz - sx * sy * sz];
+}
+function quatToEuler([x, y, z, w]) {
+  const r = (v) => Math.round(v / deg * 100) / 100;
+  const sy = Math.max(-1, Math.min(1, 2 * (x * z + w * y)));
+  const ey = Math.asin(sy);
+  if (Math.abs(sy) < 0.9999) return [r(Math.atan2(-2 * (y * z - w * x), 1 - 2 * (x * x + y * y))), r(ey), r(Math.atan2(-2 * (x * y - w * z), 1 - 2 * (y * y + z * z)))];
+  return [r(Math.atan2(2 * (y * z + w * x), 1 - 2 * (x * x + z * z))), r(ey), 0];
+}
+function tfFields(el, t) {
+  const tf = t ?? { position: [0, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1] };
+  const rows = [["位置 m", "p", tf.position], ["回転 度", "r", quatToEuler(tf.rotation)], ["大きさ", "s", tf.scale]];
+  el.innerHTML = rows.map(([label, k, v]) => `<span class="small muted">${label}</span>` + v.map((n, i) => `<input type="number" step="any" data-k="${k}${i}" value="${n}" title="${"xyz"[i]}">`).join("")).join("");
+}
+function readTf(el) {
+  const g = (k) => Number(el.querySelector(`[data-k="${k}"]`).value) || 0;
+  return { position: [g("p0"), g("p1"), g("p2")], rotation: eulerToQuat([g("r0"), g("r1"), g("r2")]), scale: [g("s0") || 1, g("s1") || 1, g("s2") || 1] };
+}
+tfFields($("#mapForm [data-tf]"));
+
+const mb = (n) => (n < 1024 * 1024 ? Math.max(1, Math.round(n / 1024)) + " KB" : (n / 1024 / 1024).toFixed(1) + " MB");
+
+async function loadMaps() {
+  const r = await api("GET", "/maps");
+  maps = r.maps;
+  renderMaps();
+  if (!editingMap) renderSessions();
+}
+
+function renderMaps() {
+  $("#mapList").innerHTML = maps.map((m) => `
+    <div class="card" data-mapcard="${esc(m.mapId)}">
+      <div class="row" style="justify-content:space-between">
+        <strong>${esc(m.name)}</strong>
+        <span class="chip">${m.source === "builtin" ? "組み込み" : "登録"}</span>
+      </div>
+      <div class="small muted"><span class="mono">${esc(m.mapId)}</span> · ${m.modelSize ? "GLB " + mb(m.modelSize) : "GLB なし"}${m.splatSize !== null ? " · SPZ " + mb(m.splatSize) : ""}${m.updatedAt ? " · " + new Date(m.updatedAt).toLocaleString() : ""}</div>
+      <div data-view style="margin:8px 0"><button class="b" data-preview>3D で見る</button> <a class="small" href="${esc(m.modelUrl)}" download>GLB</a>${m.splatUrl ? ` <a class="small" href="${esc(m.splatUrl)}" download>SPZ</a>` : ""}</div>
+      ${m.source === "builtin" ? '<p class="small muted" style="margin:0">server/maps/ にあるマップです。変えるときはファイルを直してデプロイします。</p>' : `
+      <form data-edit>
+        <div class="row"><input name="name" value="${esc(m.name)}" style="flex:1"></div>
+        <div class="tf" data-tf></div>
+        <div class="row"><input name="model" type="file" accept=".glb,model/gltf-binary"><span class="small muted">差し替える GLB（任意）</span></div>
+        <div class="row"><input name="splat" type="file" accept=".spz"><span class="small muted">差し替える SPZ（任意）</span>${m.splatSize !== null ? '<label class="small"><input name="removeSplat" type="checkbox"> SPZ を外す</label>' : ""}</div>
+        <div class="row" style="margin-top:8px"><button class="b primary">保存</button><button type="button" class="b danger" data-del>消す</button></div>
+      </form>`}
+    </div>`).join("");
+  for (const m of maps) {
+    const card = document.querySelector(`[data-mapcard="${CSS.escape(m.mapId)}"]`);
+    const tf = card.querySelector("[data-tf]");
+    if (tf) tfFields(tf, m.transform);
+  }
+}
+
+$("#mapList").addEventListener("click", async (e) => {
+  const card = e.target.closest("[data-mapcard]");
+  if (!card) return;
+  const m = maps.find((x) => x.mapId === card.dataset.mapcard);
+  if (e.target.closest("[data-preview]")) {
+    card.querySelector("[data-view]").innerHTML = `<model-viewer src="${esc(m.modelUrl)}" camera-controls auto-rotate shadow-intensity="0.6" alt="${esc(m.name)}"></model-viewer>`;
+  }
+  if (e.target.closest("[data-del]")) {
+    if (!confirm(`マップ「${m.name}」を一覧から消します。いま使っている部屋はそのまま残りますが、新しく選べなくなります。よろしいですか？`)) return;
+    try { await api("DELETE", `/maps/${encodeURIComponent(m.mapId)}`); toast("消しました"); await loadMaps(); }
+    catch (err) { toast(err.message, true); }
+  }
+});
+
+$("#mapList").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target.closest("form[data-edit]");
+  const card = e.target.closest("[data-mapcard]");
+  const fd = new FormData();
+  fd.set("mapId", card.dataset.mapcard);
+  fd.set("name", form.name.value.trim());
+  fd.set("transform", JSON.stringify(readTf(form.querySelector("[data-tf]"))));
+  if (form.model.files[0]) fd.set("model", form.model.files[0]);
+  if (form.splat.files[0]) fd.set("splat", form.splat.files[0]);
+  if (form.removeSplat?.checked) fd.set("removeSplat", "1");
+  const btn = form.querySelector("button.primary");
+  btn.disabled = true;
+  try { await api("POST", "/maps", fd); toast("保存しました"); await loadMaps(); }
+  catch (err) { toast(err.message, true); btn.disabled = false; }
+});
+
+$("#mapForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const fd = new FormData();
+  fd.set("mapId", form.mapId.value.trim());
+  fd.set("name", form.name.value.trim());
+  fd.set("transform", JSON.stringify(readTf(form.querySelector("[data-tf]"))));
+  if (form.model.files[0]) fd.set("model", form.model.files[0]);
+  if (form.splat.files[0]) fd.set("splat", form.splat.files[0]);
+  const bytes = (form.model.files[0]?.size ?? 0) + (form.splat.files[0]?.size ?? 0);
+  $("#mapSubmit").disabled = true;
+  $("#mapProgress").textContent = bytes ? `${mb(bytes)} を送っています…` : "送っています…";
+  try {
+    await api("POST", "/maps", fd);
+    toast("登録しました");
+    form.reset();
+    tfFields(form.querySelector("[data-tf]"));
+    await loadMaps();
+  } catch (err) { toast(err.message, true); }
+  $("#mapSubmit").disabled = false;
+  $("#mapProgress").textContent = "";
+});
+
+enter();
+</script>
+</body>
+</html>

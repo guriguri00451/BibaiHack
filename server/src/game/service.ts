@@ -1,11 +1,12 @@
-import { and, asc, eq, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Transform } from "../contracts/transform.ts";
 import { normalizeTransform } from "../contracts/transform.ts";
 import type { FinishReason, PublicObject, ServerMessage, SnapshotPayload } from "../contracts/ws.ts";
 import type { Db } from "../db/client.ts";
-import { gameObjects, gamePlayers, gameSessions, users } from "../db/schema.ts";
+import { gameObjects, gamePlayers, gameSessions, type RoundCycle, users } from "../db/schema.ts";
 import { ApiError } from "../http/errors.ts";
 import type { EventLog } from "../log/event-log.ts";
+import type { MapCatalog } from "../maps/maps.ts";
 import type { AssetStorage } from "../storage/assets.ts";
 import type { ObjectStorage } from "../storage/storage.ts";
 import type { Hub } from "./hub.ts";
@@ -23,6 +24,7 @@ import {
   CAPTURE_COOLDOWN_MS,
   CAPTURE_SCORE,
   DEFAULT_PLAYING_SECONDS,
+  DEFAULT_PREPARING_SECONDS,
   DOWNLOAD_URL_TTL_SECONDS,
   UPLOAD_URL_TTL_SECONDS,
   MAX_OBJECTS_PER_PLAYER_ROUND,
@@ -62,6 +64,7 @@ export class GameService {
     readonly storage: ObjectStorage,
     readonly assets: AssetStorage,
     readonly log: EventLog,
+    readonly maps: MapCatalog,
   ) {
     registry.onLoad = async (state) => {
       // 再起動を挟んでも seq を巻き戻さない（書けたログの続きから数える）
@@ -97,8 +100,9 @@ export class GameService {
     return { state, me };
   }
 
-  private requireHost(state: GameState, userId: string) {
-    if (state.hostUserId !== userId) throw new ApiError(403, "NOT_HOST", "Only the host can do this.");
+  /** userId が null なら管理画面から（ホストでなくてよい） */
+  private requireHost(state: GameState, userId: string | null) {
+    if (userId !== null && state.hostUserId !== userId) throw new ApiError(403, "NOT_HOST", "Only the host can do this.");
   }
 
   private hostPlayerId(state: GameState): string | null {
@@ -130,6 +134,7 @@ export class GameService {
       round: session.round,
       mapId: session.mapId,
       phaseEndsAt: iso(session.phaseEndsAt),
+      cycle: session.cycle ? { resultSeconds: session.cycle.resultSeconds } : null,
       createdAt: session.createdAt.toISOString(),
       players,
     };
@@ -243,67 +248,114 @@ export class GameService {
   async startRound(
     sessionId: string,
     userId: string,
-    body: { preparingSeconds: number; playingSeconds?: number; roles: { playerId: string; role: Role }[] },
+    body: {
+      preparingSeconds: number;
+      playingSeconds?: number;
+      resultSeconds?: number;
+      roles: { playerId: string; role: Role }[];
+    },
   ) {
     const state = await this.requireSession(sessionId);
     this.requireHost(state, userId);
-    await withLock(state, async () => {
-      if (state.status !== "waiting" && state.status !== "finished") {
-        throw new ApiError(409, "INVALID_GAME_PHASE", `A round cannot start while ${state.status}.`);
-      }
-      await this.registry.syncPlayers(state);
-      const roles = new Map<string, Role>();
-      for (const r of body.roles) {
-        if (!state.players.has(r.playerId)) {
-          throw new ApiError(400, "UNKNOWN_PLAYER", `Player ${r.playerId} is not in this session.`);
-        }
-        if (roles.has(r.playerId)) throw new ApiError(400, "DUPLICATE_PLAYER", `Player ${r.playerId} is listed twice.`);
-        roles.set(r.playerId, r.role);
-      }
-      if (![...roles.values()].includes("hider")) throw new ApiError(400, "NO_HIDER", "At least one hider is required.");
-
-      const from = state.status;
-      const round = from === "finished" ? state.round + 1 : state.round;
-      const endsAt = new Date(Date.now() + body.preparingSeconds * 1000);
-      await this.db.transaction(async (tx) => {
-        await this.transition(tx, state, from, { status: "preparing", round, phaseEndsAt: endsAt });
-        for (const p of state.players.values()) {
-          await tx
-            .update(gamePlayers)
-            .set({ role: roles.get(p.playerId) ?? null, isCaught: false })
-            .where(eq(gamePlayers.id, p.playerId));
-        }
-      });
-
-      if (round !== state.round) {
-        state.round = round;
-        state.seq = 0;
-        state.objects.clear(); // 前のラウンドのオブジェクトは出さない（DB には残る）
-        state.snapshotSeq = -1;
-      }
-      state.status = "preparing";
-      state.phaseEndsAt = endsAt;
-      state.playingSeconds = body.playingSeconds ?? null;
-      for (const p of state.players.values()) {
-        p.role = roles.get(p.playerId) ?? null;
-        p.isCaught = false;
-        p.lastCaptureAt = 0;
-      }
-      this.announcePhase(state, null, {
-        roles: [...state.players.values()].map((p) => ({ playerId: p.playerId, role: p.role })),
-      });
-    });
+    await withLock(state, () => this.startLocked(state, body, null));
     return this.sessionDetail(sessionId);
   }
 
-  async play(sessionId: string, userId: string, body: { playingSeconds?: number }) {
+  /**
+   * 準備を始める（waiting か finished から）。resultSeconds があれば、ラウンドが終わってからその秒数で
+   * 次のラウンドを同じ設定で自動で始める（cycle）。無ければ cycle は外れ、次はホストが始める
+   */
+  private async startLocked(
+    state: GameState,
+    body: { preparingSeconds: number; playingSeconds?: number; resultSeconds?: number; roles: { playerId: string; role: Role }[] },
+    byPlayerId: string | null,
+  ) {
+    if (state.status !== "waiting" && state.status !== "finished") {
+      throw new ApiError(409, "INVALID_GAME_PHASE", `A round cannot start while ${state.status}.`);
+    }
+    await this.registry.syncPlayers(state);
+    const roles = new Map<string, Role>();
+    for (const r of body.roles) {
+      if (!state.players.has(r.playerId)) {
+        throw new ApiError(400, "UNKNOWN_PLAYER", `Player ${r.playerId} is not in this session.`);
+      }
+      if (roles.has(r.playerId)) throw new ApiError(400, "DUPLICATE_PLAYER", `Player ${r.playerId} is listed twice.`);
+      roles.set(r.playerId, r.role);
+    }
+    if (![...roles.values()].includes("hider")) throw new ApiError(400, "NO_HIDER", "At least one hider is required.");
+
+    const cycle: RoundCycle | null =
+      body.resultSeconds !== undefined
+        ? {
+            preparingSeconds: body.preparingSeconds,
+            playingSeconds: body.playingSeconds ?? DEFAULT_PLAYING_SECONDS,
+            resultSeconds: body.resultSeconds,
+            roles: [...roles].map(([playerId, role]) => ({ playerId, role })),
+          }
+        : null;
+    const from = state.status;
+    const round = from === "finished" ? state.round + 1 : state.round;
+    const endsAt = new Date(Date.now() + body.preparingSeconds * 1000);
+    await this.db.transaction(async (tx) => {
+      await this.transition(tx, state, from, { status: "preparing", round, phaseEndsAt: endsAt, cycle });
+      for (const p of state.players.values()) {
+        await tx
+          .update(gamePlayers)
+          .set({ role: roles.get(p.playerId) ?? null, isCaught: false })
+          .where(eq(gamePlayers.id, p.playerId));
+      }
+    });
+
+    if (round !== state.round) {
+      state.round = round;
+      state.seq = 0;
+      state.objects.clear(); // 前のラウンドのオブジェクトは出さない（DB には残る）
+      state.snapshotSeq = -1;
+    }
+    state.status = "preparing";
+    state.phaseEndsAt = endsAt;
+    state.playingSeconds = body.playingSeconds ?? null;
+    state.cycle = cycle;
+    for (const p of state.players.values()) {
+      p.role = roles.get(p.playerId) ?? null;
+      p.isCaught = false;
+      p.lastCaptureAt = 0;
+    }
+    this.announcePhase(state, byPlayerId, {
+      roles: [...state.players.values()].map((p) => ({ playerId: p.playerId, role: p.role })),
+    });
+  }
+
+  /**
+   * cycle の役割で次のラウンドを始める。cycle に無い参加者（後から入った人）はケイ。
+   * 誰も繋いでいなければ（みんな帰った部屋）始めずにサイクルを止める
+   */
+  private async startNextLocked(state: GameState, force = false) {
+    const cycle = state.cycle;
+    if (!cycle) return;
+    if (!force && ![...state.players.values()].some((p) => p.connected)) {
+      await this.stopCycleLocked(state, "nobody_connected");
+      return;
+    }
+    await this.registry.syncPlayers(state);
+    const listed = new Map(cycle.roles.map((r) => [r.playerId, r.role]));
+    const roles = [...state.players.values()].map((p) => ({ playerId: p.playerId, role: listed.get(p.playerId) ?? ("seeker" as Role) }));
+    await this.startLocked(
+      state,
+      { preparingSeconds: cycle.preparingSeconds, playingSeconds: cycle.playingSeconds, resultSeconds: cycle.resultSeconds, roles },
+      null,
+    );
+  }
+
+  /** userId が null なら管理画面から */
+  async play(sessionId: string, userId: string | null, body: { playingSeconds?: number }) {
     const state = await this.requireSession(sessionId);
     this.requireHost(state, userId);
     await withLock(state, () => this.playLocked(state, body.playingSeconds, null));
     return this.sessionDetail(sessionId);
   }
 
-  async finish(sessionId: string, userId: string) {
+  async finish(sessionId: string, userId: string | null) {
     const state = await this.requireSession(sessionId);
     this.requireHost(state, userId);
     await withLock(state, () => this.finishLocked(state, "host"));
@@ -317,7 +369,7 @@ export class GameService {
     const secs = playingSeconds ?? state.playingSeconds ?? DEFAULT_PLAYING_SECONDS;
     const endsAt = new Date(Date.now() + secs * 1000);
     await this.db.transaction((tx) =>
-      this.transition(tx, state, "preparing", { status: "playing", round: state.round, phaseEndsAt: endsAt }),
+      this.transition(tx, state, "preparing", { status: "playing", round: state.round, phaseEndsAt: endsAt, cycle: state.cycle }),
     );
     state.status = "playing";
     state.phaseEndsAt = endsAt;
@@ -336,8 +388,10 @@ export class GameService {
     const survivors =
       from === "playing" ? [...state.players.values()].filter((p) => p.role === "hider" && !p.isCaught) : [];
     const newScores = new Map<string, number>();
+    // cycle があれば、finished の期限 = 次のラウンドの準備が始まる時刻
+    const nextAt = state.cycle ? new Date(Date.now() + state.cycle.resultSeconds * 1000) : null;
     await this.db.transaction(async (tx) => {
-      await this.transition(tx, state, from, { status: "finished", round: state.round, phaseEndsAt: null });
+      await this.transition(tx, state, from, { status: "finished", round: state.round, phaseEndsAt: nextAt, cycle: state.cycle });
       for (const p of survivors) {
         const [row] = await tx
           .update(gamePlayers)
@@ -357,7 +411,7 @@ export class GameService {
     for (const o of state.objects.values()) o.transformDirty = false;
     for (const [pid, score] of newScores) state.players.get(pid)!.score = score;
     state.status = "finished";
-    state.phaseEndsAt = null;
+    state.phaseEndsAt = nextAt;
     for (const p of survivors) {
       this.appendLog(state, p.playerId, "score.changed", { playerId: p.playerId, delta: SURVIVE_SCORE, score: p.score, reason: "survived" });
     }
@@ -370,7 +424,7 @@ export class GameService {
     tx: Pick<Db, "update">,
     state: GameState,
     from: Status,
-    to: { status: Status; round: number; phaseEndsAt: Date | null },
+    to: { status: Status; round: number; phaseEndsAt: Date | null; cycle: RoundCycle | null },
   ) {
     const updated = await tx
       .update(gameSessions)
@@ -432,14 +486,129 @@ export class GameService {
     this.schedule(state);
   }
 
+  // ================= サイクル・マップ（ホストと管理画面） =================
+
+  /** 次のラウンドへの自動の進行をやめる。finished で待っていたら期限も外す。userId が null なら管理画面から */
+  async stopCycle(sessionId: string, userId: string | null) {
+    const state = await this.requireSession(sessionId);
+    this.requireHost(state, userId);
+    await withLock(state, () => this.stopCycleLocked(state, userId === null ? "admin" : "host"));
+    return this.sessionDetail(sessionId);
+  }
+
+  private async stopCycleLocked(state: GameState, reason: "host" | "admin" | "nobody_connected") {
+    if (!state.cycle) return;
+    const phaseEndsAt = state.status === "finished" ? null : state.phaseEndsAt;
+    await this.db.transaction((tx) =>
+      this.transition(tx, state, state.status, { status: state.status, round: state.round, phaseEndsAt, cycle: null }),
+    );
+    state.cycle = null;
+    state.phaseEndsAt = phaseEndsAt;
+    this.schedule(state);
+    this.appendLog(state, null, "session.cycle_stopped", { reason });
+    this.pushSnapshots(state);
+  }
+
+  /**
+   * マップを替える（待機中と、ラウンドが終わって次を待っている間だけ）。繋いでいる全員に snapshot を送り直す。
+   * userId が null なら管理画面から
+   */
+  async setMap(sessionId: string, userId: string | null, mapId: string) {
+    const state = await this.requireSession(sessionId);
+    this.requireHost(state, userId);
+    if (!(await this.maps.has(mapId))) throw new ApiError(404, "MAP_NOT_FOUND", "Map not found.");
+    await withLock(state, async () => {
+      if (state.status !== "waiting" && state.status !== "finished") {
+        throw new ApiError(409, "INVALID_GAME_PHASE", `The map cannot change while ${state.status}.`);
+      }
+      if (state.mapId === mapId) return;
+      const updated = await this.db
+        .update(gameSessions)
+        .set({ mapId })
+        .where(and(eq(gameSessions.id, state.sessionId), eq(gameSessions.status, state.status)))
+        .returning({ id: gameSessions.id });
+      if (updated.length === 0) throw new ApiError(409, "CONFLICT", "The session state changed. Reload and retry.");
+      state.mapId = mapId;
+      this.appendLog(state, null, "session.map_changed", { mapId });
+      this.pushSnapshots(state);
+    });
+    return this.sessionDetail(sessionId);
+  }
+
+  /**
+   * 管理画面の「次のラウンドを始める」。cycle があればその設定で、無ければホストがドロ・ほかはケイ、既定の長さで
+   */
+  async adminStart(sessionId: string) {
+    const state = await this.requireSession(sessionId);
+    await withLock(state, async () => {
+      if (state.cycle) return this.startNextLocked(state, true);
+      await this.registry.syncPlayers(state);
+      const roles = [...state.players.values()].map((p) => ({
+        playerId: p.playerId,
+        role: (p.userId === state.hostUserId ? "hider" : "seeker") as Role,
+      }));
+      await this.startLocked(state, { preparingSeconds: DEFAULT_PREPARING_SECONDS, roles }, null);
+    });
+    return this.sessionDetail(sessionId);
+  }
+
+  /** 管理画面のセッション一覧（新しい順）。接続中かどうかはメモリに載っているものだけわかる */
+  async adminSessions(limit: number) {
+    const rows = await this.db.select().from(gameSessions).orderBy(desc(gameSessions.createdAt)).limit(limit);
+    if (rows.length === 0) return [];
+    const players = await this.db
+      .select({
+        id: gamePlayers.id,
+        sessionId: gamePlayers.sessionId,
+        userId: gamePlayers.userId,
+        name: users.name,
+        role: gamePlayers.role,
+        score: gamePlayers.score,
+        isCaught: gamePlayers.isCaught,
+      })
+      .from(gamePlayers)
+      .innerJoin(users, eq(users.id, gamePlayers.userId))
+      .where(inArray(gamePlayers.sessionId, rows.map((r) => r.id)))
+      .orderBy(asc(gamePlayers.createdAt));
+    const out = [];
+    for (const r of rows) {
+      const live = await this.registry.peek(r.id);
+      out.push({
+        id: r.id,
+        hostUserId: r.hostUserId,
+        // メモリに載っていればそちらが新しい（WS の接続・タイマーで変わる）
+        status: live?.status ?? r.status,
+        round: live?.round ?? r.round,
+        mapId: live?.mapId ?? r.mapId,
+        phaseEndsAt: iso(live ? live.phaseEndsAt : r.phaseEndsAt),
+        cycle: (live ? live.cycle : r.cycle) ? { resultSeconds: (live ? live.cycle : r.cycle)!.resultSeconds } : null,
+        createdAt: r.createdAt.toISOString(),
+        players: players
+          .filter((p) => p.sessionId === r.id)
+          .map(({ sessionId: _, ...p }) => {
+            const lp = live?.players.get(p.id);
+            return {
+              ...p,
+              role: lp ? lp.role : p.role,
+              score: lp?.score ?? p.score,
+              isCaught: lp?.isCaught ?? p.isCaught,
+              connected: lp?.connected ?? false,
+            };
+          }),
+      });
+    }
+    return out;
+  }
+
   // ================= 期限（サーバー時刻が正） =================
 
-  /** 準備中・本番中なら期限にタイマーを掛ける */
+  /** 準備中・本番中と、次のラウンドを待っている finished なら期限にタイマーを掛ける */
   private schedule(state: GameState) {
     if (state.timer) clearTimeout(state.timer);
     state.timer = null;
     if (this.disposed || !state.phaseEndsAt) return;
-    if (state.status !== "preparing" && state.status !== "playing") return;
+    const waitsNext = state.status === "finished" && state.cycle !== null;
+    if (state.status !== "preparing" && state.status !== "playing" && !waitsNext) return;
     const { round, status } = state;
     const delay = Math.max(0, state.phaseEndsAt.getTime() - Date.now());
     state.timer = setTimeout(() => void this.onDeadline(state, round, status), delay);
@@ -452,7 +621,8 @@ export class GameService {
         if (state.round !== round || state.status !== status || !state.phaseEndsAt) return; // もう進んだ
         if (state.phaseEndsAt.getTime() - Date.now() > DEADLINE_SLACK_MS) return this.schedule(state);
         if (status === "preparing") await this.playLocked(state, undefined, null);
-        else await this.finishLocked(state, "time_up");
+        else if (status === "playing") await this.finishLocked(state, "time_up");
+        else await this.startNextLocked(state);
       });
     } catch (e) {
       // ホストが同時に進めた（409）などは無視してよい

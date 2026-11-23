@@ -14,7 +14,20 @@ import {
 } from "drizzle-orm/pg-core";
 import type { Transform } from "../contracts/transform.ts";
 
-/** 仕様書 3章の4テーブル */
+/** 仕様書 3章の4テーブルと、管理画面から登録したマップ（maps） */
+
+/**
+ * 終わったラウンドから次のラウンドへサーバーが自分で進むための設定（rounds/start の resultSeconds）。
+ * 再起動してもサイクルを続けられるよう DB に置く
+ */
+export type RoundCycle = {
+  preparingSeconds: number;
+  playingSeconds: number;
+  /** finished（結果を見せる時間）の長さ。これが過ぎると次のラウンドの準備に入る */
+  resultSeconds: number;
+  /** 次のラウンドの役割。ここに無い参加者（後から入った人）はケイ */
+  roles: { playerId: string; role: "hider" | "seeker" }[];
+};
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 
@@ -37,6 +50,8 @@ export const gameSessions = pgTable(
     round: integer("round").notNull().default(1),
     mapId: text("map_id").notNull(),
     phaseEndsAt: timestamp("phase_ends_at", { withTimezone: true }),
+    /** null ならホストが次のラウンドを始める */
+    cycle: jsonb("cycle").$type<RoundCycle>(),
     createdAt: createdAt(),
   },
   (t) => [
@@ -92,3 +107,20 @@ export const gameObjects = pgTable(
     index("idx_game_objects_player_round").on(t.playerId, t.round),
   ],
 );
+
+/**
+ * 管理画面から登録したマップ（server/maps/ の組み込みマップとは別）。
+ * GLB は ObjectStorage の modelKey、Gaussian Splat（SPZ）は splatKey に置く。少なくともどちらか一方はある
+ */
+export const maps = pgTable("maps", {
+  mapId: text("map_id").primaryKey(),
+  name: text("name").notNull(),
+  /** null なら SPZ だけのマップ（model.glb は空のシーンを返す） */
+  modelKey: text("model_key"),
+  modelSize: integer("model_size").notNull(),
+  splatKey: text("splat_key"),
+  splatSize: integer("splat_size"),
+  transform: jsonb("transform").$type<Transform>().notNull(),
+  createdAt: createdAt(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

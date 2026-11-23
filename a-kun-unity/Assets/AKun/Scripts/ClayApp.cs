@@ -70,7 +70,7 @@ namespace AKun
         static readonly Color RING_KNEAD = Gfx.Hex("#ff9e40");
 
         // 粘土の表面からこの距離 (m) より近くでつまんだときは、粘土ごと動かす・回す操作を始めない
-        const float NO_MOVE_NEAR = 0.12f;
+        const float NO_MOVE_NEAR = 0.06f;
         // 格子が粗いので、手の太さ・影響の幅が格子 1 マスより細くなりすぎないようにする (格子単位)
         const float MIN_R_GRID = 1.2f, MIN_F_GRID = 1.5f;
         // 頭の前に置く: forward = 粘土の手前の面までの距離 (m)。drop = 0: 粘土の中心が目と同じ高さ
@@ -95,6 +95,7 @@ namespace AKun
         Post post;
         public MapView map;
         Task mapLoading;
+        string mapLoadingId;
         bool hiding, mapPlaced; // hiding: 投稿の前に、マップの上で隠す場所を選んでいる間
         readonly List<ButtonPanel> uiPanels = new List<ButtonPanel>();
         bool xrActive;
@@ -627,14 +628,14 @@ namespace AKun
         //   name / map / prepare (準備の秒数) / play (本番の秒数)
         void ApplyConfig()
         {
-            string server = null, room = null, name = null, mapArg = null, prepare = null, play = null;
+            string server = null, room = null, name = null, mapArg = null, prepare = null, play = null, result = null;
             try
             {
                 string path = Path.Combine(Application.persistentDataPath, "config.json");
                 if (File.Exists(path) && MiniJson.Parse(File.ReadAllText(path)) is Dictionary<string, object> cfg)
                 {
                     server = cfg.Str("server"); room = cfg.Str("room"); name = cfg.Str("name"); mapArg = cfg.Str("map");
-                    prepare = cfg.Str("prepare"); play = cfg.Str("play");
+                    prepare = cfg.Str("prepare"); play = cfg.Str("play"); result = cfg.Str("result");
                 }
             }
             catch (Exception e) { Log($"config.json を読めません: {e.Message}"); }
@@ -650,6 +651,7 @@ namespace AKun
                 mapArg = intent.Call<string>("getStringExtra", "map") ?? mapArg;
                 prepare = intent.Call<string>("getStringExtra", "prepare") ?? prepare;
                 play = intent.Call<string>("getStringExtra", "play") ?? play;
+                result = intent.Call<string>("getStringExtra", "result") ?? result;
             }
             catch (Exception e) { Debug.Log($"[clay] intent を読めません: {e.Message}"); }
 #endif
@@ -657,7 +659,10 @@ namespace AKun
             if (!string.IsNullOrEmpty(server))
             {
                 Log(string.IsNullOrEmpty(room) ? $"サーバーに接続して部屋を作ります: {server}" : $"サーバーに接続します: {server} 部屋 {room}");
-                post.Connect(server, room ?? "", string.IsNullOrEmpty(name) ? "a-kun" : name, mapId, Seconds(prepare, 120), Seconds(play, 180));
+                // result: 結果を見せる秒数。過ぎるとサーバーが次のラウンドを始める。0 ならホストが「次のラウンドへ」
+                double resultSeconds = string.IsNullOrEmpty(result) ? 20 : double.TryParse(result, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var rs) && rs >= 0 ? rs : 20;
+                post.Connect(server, room ?? "", string.IsNullOrEmpty(name) ? "a-kun" : name, mapId, Seconds(prepare, 120), Seconds(play, 180), resultSeconds);
             }
         }
 
@@ -665,10 +670,9 @@ namespace AKun
             => double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) && v > 0 ? v : fallback;
 
         // マップ: サーバーにつないでいれば GET /v1/maps/{mapId}。使えなければ StreamingAssets/mock/{mapId}.json
-        async Task LoadMap()
+        async Task LoadMap(string id)
         {
             var s = post.Server;
-            string id = s?.game.mapId ?? mapId;
             if (s != null)
             {
                 try { await map.Load(id, s.apiBase, s.Token); return; }
@@ -785,9 +789,17 @@ namespace AKun
         // spot: 前に隠した場所 (マップの root から見た位置)。あれば最初から選んでおく
         public async Task BeginHide(Mesh shape, (Vector3 pos, Quaternion rot)? spot)
         {
-            if (!map.IsLoaded)
+            // ホストがマップを替えていたら読み直す (ラウンドの途中では替わらない)
+            string want = post.Server?.game.mapId ?? mapId;
+            if (!map.IsLoaded || map.LoadedId != want)
             {
-                if (mapLoading == null) { Log($"マップを読み込みます: {post.Server?.game.mapId ?? mapId}"); mapLoading = LoadMap(); }
+                if (mapLoading == null || mapLoadingId != want)
+                {
+                    Log($"マップを読み込みます: {post.Server?.MapName(want) ?? want}");
+                    mapLoadingId = want;
+                    mapLoading = LoadMap(want);
+                    mapPlaced = false; // 大きさが違うので、作業台の上に置き直す
+                }
                 try { await mapLoading; }
                 catch (Exception) { mapLoading = null; throw; } // 次の「投稿する」でもう一度読む
                 Log($"マップを読み込みました: {map.Name}");
@@ -1373,7 +1385,7 @@ namespace AKun
                 // つまんだ所に小さな輪と音 (伸ばす音の高さは、ここからの距離で決める)
                 hfx[hs == hands[0] ? 0 : 1].pullStart = hs.pinchPos;
                 var nw = clay.rotation * n;
-                Sfx.Play("pop", hs.pinchPos, 0.45f, 0.8f);
+                Sfx.Play("pinch", hs.pinchPos, 0.7f);
                 fx.Ripple(GridToWorld(g - n * s) + nw * 0.002f, nw, new Color(1, 0.84f, 0.31f, 0.85f), 0.008f, 0.04f, 0.35f);
             }
             else if (s < WorldLenToGrid(NO_MOVE_NEAR))
@@ -1389,6 +1401,7 @@ namespace AKun
         void EndPinch(HandState hs)
         {
             if (!hs.pinching) return;
+            if (hs.pinchMode == "pull") Sfx.Play("release", hs.pinchPos, 0.6f); // 伸ばしていた粘土を離した
             hs.pinching = false;
             hs.pinchMode = null;
             manipDirty = true;

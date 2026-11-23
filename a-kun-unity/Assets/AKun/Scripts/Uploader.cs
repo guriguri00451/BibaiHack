@@ -100,6 +100,13 @@ namespace AKun
         public bool PhaseBusy { get; private set; }
         public bool Connected => ws != null && ws.State == WebSocketState.Open && authed;
         public double preparingSeconds = 120, playingSeconds = 180;
+        // 結果を見せる秒数。0 より大きければ、ラウンドが終わってこの秒数でサーバーが次のラウンドを始める (0 ならホストが「次のラウンドへ」)
+        public double resultSeconds = 20;
+
+        // 選べるマップ (GET /v1/maps)。ホストは待機中とラウンドの終わった後に替えられる
+        public readonly List<MapEntry> maps = new List<MapEntry>();
+        public bool MapBusy { get; private set; }
+        public struct MapEntry { public string id, name; }
 
         readonly Action<string> log;
         readonly HashSet<string> warned = new HashSet<string>();
@@ -325,11 +332,63 @@ namespace AKun
 
         // ---------- フェーズ (ホスト) ----------
 
-        public Task StartRound() => Phase("start", new Dictionary<string, object>
+        public Task StartRound()
         {
-            ["preparingSeconds"] = (int)preparingSeconds,
-            ["roles"] = Roles(),
-        }, () => game.LocalStart(preparingSeconds, game.myPlayerId, DateTime.UtcNow), "準備を始めました");
+            var body = new Dictionary<string, object>
+            {
+                ["preparingSeconds"] = (int)preparingSeconds,
+                ["playingSeconds"] = (int)playingSeconds,
+                ["roles"] = Roles(),
+            };
+            // サーバーが 終了 → 次の準備 も進める (同じ役割で。後から入った人はケイ)
+            if (resultSeconds > 0) body["resultSeconds"] = Math.Max(1, (int)resultSeconds);
+            return Phase("start", body, () => game.LocalStart(preparingSeconds, game.myPlayerId, DateTime.UtcNow), "準備を始めました");
+        }
+
+        // ---------- マップ ----------
+
+        // GET /v1/maps。無ければ (古いサーバー) 今のマップだけ
+        public async Task LoadMaps()
+        {
+            var r = await Api("GET", "/maps", null);
+            maps.Clear();
+            if (r.Ok && r.json != null && r.json.TryGetValue("maps", out var mv) && mv is List<object> list)
+            {
+                foreach (var o in list)
+                {
+                    if (!(o is Dictionary<string, object> m) || m.Str("mapId") == null) continue;
+                    maps.Add(new MapEntry { id = m.Str("mapId"), name = m.Str("name") ?? m.Str("mapId") });
+                }
+            }
+            else if (r.notImplemented) Warn("GET /maps", "GET /maps が無いので、マップは選べません");
+            else Debug.LogWarning($"[game] マップの一覧を取れません: {r.error}");
+        }
+
+        public string MapName(string id)
+        {
+            foreach (var m in maps) if (m.id == id) return m.name;
+            return id ?? "";
+        }
+
+        public bool CanChangeMap => game.IsHost && !MapBusy && !PhaseBusy && Sid != null
+            && (game.status == GameState.WAITING || game.status == GameState.FINISHED) && maps.Count > 1;
+
+        // 一覧の次のマップにする (ホスト)。PUT /v1/sessions/{id}/map。ほかの端末には snapshot で届く
+        public async Task NextMap()
+        {
+            if (!CanChangeMap) return;
+            int i = maps.FindIndex(m => m.id == game.mapId);
+            var next = maps[(i + 1) % maps.Count];
+            MapBusy = true;
+            try
+            {
+                var r = await Api("PUT", $"/sessions/{Sid}/map", new Dictionary<string, object> { ["mapId"] = next.id });
+                if (r.Ok) { game.ApplySessionDetail(r.json); log($"マップを「{next.name}」にしました"); }
+                else if (r.notImplemented) Warn("PUT /sessions/{id}/map", "PUT /sessions/{id}/map が無いので、マップは替えられません");
+                else log($"[エラー] マップを替えられません ({r.error})");
+            }
+            finally { MapBusy = false; }
+        }
 
         public Task Play() => Phase("play", new Dictionary<string, object> { ["playingSeconds"] = (int)playingSeconds },
             () => game.LocalPlay(playingSeconds, DateTime.UtcNow), "本番を始めました");
