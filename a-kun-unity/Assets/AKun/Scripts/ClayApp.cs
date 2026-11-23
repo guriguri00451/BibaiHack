@@ -959,7 +959,7 @@ namespace AKun
             // レイの線と、当たった所の点
             var line = pointers[hi].line;
             line.enabled = true;
-            line.SetPosition(0, o); // 親指と人差し指の間から出す (PinchRay)
+            line.SetPosition(0, o + Vector3.down * 0.02f);
             line.SetPosition(1, hit.point);
             brushMat[hi].SetColor("_BaseColor", hs.pinching ? new Color(1, 0.84f, 0.31f, 0.9f) : new Color(1, 1, 1, 0.7f));
             brushCursor[hi].position = hit.point;
@@ -1473,27 +1473,6 @@ namespace AKun
             return true;
         }
 
-        // 親指と人差し指の間から出るレイ (MRTK3 の HandRay と同じ考え方)。
-        // 起点: 親指の付け根 (ThumbProximal) と人差し指の付け根 (IndexProximal) の中ほど。つまんでも動きにくい所なので、つまんだ瞬間にレイがぶれない。
-        // 向き: 頭から決める「肩のあたりの支点」から起点を通る向き。支点は頭の 8cm 前、手の高さに応じて 20〜60cm 下、手の側へ 8〜15cm
-        bool PinchRay(HandState hs, out Vector3 origin, out Vector3 dir)
-        {
-            origin = default; dir = default;
-            if (!hs.valid.Contains(XRHandJointID.IndexProximal) || !hs.valid.Contains(XRHandJointID.ThumbProximal)) return false;
-            origin = (hs.jreal[XRHandJointID.IndexProximal] + hs.jreal[XRHandJointID.ThumbProximal]) * 0.5f; // 震えを抑えた関節を使う
-            var head = cam.transform;
-            var h = head.InverseTransformPoint(origin);
-            float relY = Mathf.Clamp(-0.1f + Mathf.Min(0.65f * h.y, 0), -0.6f, -0.2f);
-            float relX = hs.side == Handedness.Right
-                ? Mathf.Clamp(0.03f + 0.65f * h.x, 0.08f, 0.15f)
-                : Mathf.Clamp(-0.03f + 0.65f * h.x, -0.15f, -0.08f);
-            var pivot = head.position + head.TransformVector(new Vector3(relX, relY, 0.08f));
-            var d = origin - pivot;
-            if (d.sqrMagnitude < 1e-6f) return false;
-            dir = d.normalized;
-            return true;
-        }
-
         void ShowUiPointer(int i, ButtonPanel.Hit hit, Vector3 origin, bool pressed)
         {
             var (ring, _, line) = pointers[i];
@@ -1507,7 +1486,7 @@ namespace AKun
             ring.localScale = new Vector3(0.022f * sc, 0.022f * sc, 1);
             var r = ring.GetComponent<MeshRenderer>();
             ButtonPanel.SetRect(r, new Color(1, 1, 1, 0), pressed ? Gfx.Hex("#ffd54f") : Color.white, 0.022f * sc, 0.022f * sc, 0.011f * sc, 0.004f * sc, 0.95f);
-            line.SetPosition(0, hiding ? origin : origin + Vector3.down * 0.02f);
+            line.SetPosition(0, origin + Vector3.down * 0.02f);
             line.SetPosition(1, ring.position);
         }
 
@@ -1550,8 +1529,7 @@ namespace AKun
                 ReadJoints(hs, hand, t);
 
                 // レイが板を指しているか (粘土のすぐそばにある手は、粘土を触る方を優先して指さない)
-                // 隠す場所を選んでいる間は、親指と人差し指の間から出るレイ (MRTK3 と同じ肩の支点の方式) にする
-                bool hasRay = hiding ? PinchRay(hs, out var rayO, out var rayD) : HandRay(hs, hand, out rayO, out rayD);
+                bool hasRay = HandRay(hs, hand, out var rayO, out var rayD);
                 ButtonPanel.Hit hit = null;
                 if (hasRay && (!hs.pinching || hs.uiPinch))
                 {
