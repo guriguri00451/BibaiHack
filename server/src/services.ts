@@ -36,6 +36,7 @@ export function buildServices(opts: {
     opts.assetStorage ??
     createLocalAssetStorage(storage, signer, opts.assetBaseUrl ?? opts.publicUrl ?? "http://localhost");
   const log = new EventLog(storage, { flushIntervalMs: opts.logFlushIntervalMs });
-  const game = new GameService(opts.db, new GameRegistry(opts.db), new Hub(), storage, assets, log);
-  return { game, storage, assets, signer, maps: opts.maps ?? new MapCatalog() };
+  const maps = (opts.maps ?? new MapCatalog()).attach(opts.db, storage);
+  const game = new GameService(opts.db, new GameRegistry(opts.db), new Hub(), storage, assets, log, maps);
+  return { game, storage, assets, signer, maps };
 }
