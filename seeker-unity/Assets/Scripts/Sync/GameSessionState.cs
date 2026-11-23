@@ -38,6 +38,8 @@ namespace Seeker.Sync
         public GamePhase Phase { get; private set; } = GamePhase.Waiting;
         public long Round { get; private set; } = long.MinValue;
         public GameResult Result { get; private set; }
+        /// <summary>セッションのマップ。a-kun-unity のホストが待機中・ラウンド後に替えると snapshot（session.mapId）で届く。未着なら null。</summary>
+        public string MapId { get; private set; }
         public IReadOnlyList<string> Participants => participants;
 
         /// <summary>表示に影響する変化があったら true。</summary>
@@ -64,6 +66,16 @@ namespace Seeker.Sync
             {
                 Phase = phase;
                 isChanged = true;
+            }
+
+            if (isSnapshot)
+            {
+                var mapId = (string)(message.Payload["session"]?["mapId"] ?? message.Payload["mapId"]);
+                if (!string.IsNullOrEmpty(mapId) && mapId != MapId)
+                {
+                    MapId = mapId;
+                    isChanged = true;
+                }
             }
 
             isChanged |= ReadParticipants(message.Payload["participants"]);

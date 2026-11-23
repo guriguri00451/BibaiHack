@@ -57,6 +57,10 @@ namespace AKun.EditorTools
             g.ApplyMessage(J(@"{""type"":""session.snapshot"",""round"":1,""seq"":0,""timestamp"":0,""payload"":{""session"":{""id"":""s"",""status"":""waiting"",""round"":1,""phaseEndsAt"":null},
                 ""you"":{""playerId"":""p1"",""role"":null},""players"":[{""playerId"":""p1"",""name"":""a"",""role"":null,""isCaught"":false,""connected"":true,""transform"":null}]}}"));
             Check(g.status == "preparing" && g.IsHider, "この端末で進めている間は snapshot のフェーズで上書きしない");
+            Check(g.mapId == "m", "snapshot に mapId が無ければマップはそのまま");
+            g.ApplyMessage(J(@"{""type"":""session.snapshot"",""round"":1,""seq"":0,""timestamp"":0,""payload"":{""session"":{""id"":""s"",""status"":""waiting"",""round"":1,""mapId"":""m2"",""phaseEndsAt"":null},
+                ""you"":{""playerId"":""p1"",""role"":null},""players"":[]}}"));
+            Check(g.mapId == "m2", "ホストがマップを替えると snapshot の mapId で替わる");
             g.clockOffsetMs = 0;
 
             g.LocalPlay(30, now);
@@ -110,10 +114,12 @@ namespace AKun.EditorTools
             void Log(string m) => Debug.Log($"[test] log: {m}");
             PlayerPrefs.DeleteKey("akun.guest." + GameUrls.Endpoints(server).api); // 毎回新しいゲストで
 
-            var host = new ServerTarget(server, Log) { preparingSeconds = 3, playingSeconds = 3 };
+            var host = new ServerTarget(server, Log) { preparingSeconds = 3, playingSeconds = 3, resultSeconds = 2 };
             await host.Connect("", "test-hider", "bibai-museum");
             var g = host.game;
             Check(g.sessionId != null && g.IsHost && host.Connected, $"部屋を作ってホストになる ({g.sessionId})");
+            await host.LoadMaps();
+            Debug.Log($"[test] マップ {host.maps.Count} 件: {string.Join(", ", host.maps.ConvertAll(m => m.id))}");
 
             // ケイ役 (seeker-unity の代わり) が同じ部屋に入る
             var seeker = new ServerTarget(server, Log);
@@ -122,6 +128,18 @@ namespace AKun.EditorTools
             Check(seeker.Connected && !seeker.game.IsHost, "もう 1 人が参加する");
             await host.RefreshSession();
             Check(g.players.Count == 2, $"参加者 {g.players.Count} 人");
+
+            // 始める前に、ホストがマップを選ぶ (ケイ側は選ばず、snapshot で届く)
+            if (host.maps.Count > 1)
+            {
+                string before = g.mapId;
+                await host.NextMap();
+                Check(g.mapId != before, $"ホストが次のマップにする ({before} → {g.mapId})");
+                var until0 = DateTime.UtcNow.AddSeconds(5);
+                while (seeker.game.mapId != g.mapId && DateTime.UtcNow < until0) await Task.Delay(100);
+                Check(seeker.game.mapId == g.mapId, $"ケイ側にもマップが届く ({seeker.game.mapId})");
+            }
+            else Debug.Log("[test] マップが 1 つしか無いので、マップの切り替えは確かめません");
 
             await host.StartRound();
             Check(g.status == GameState.PREPARING && g.IsHider && g.CanHide, $"準備中・ドロ (localPhase={g.localPhase})");
@@ -148,10 +166,16 @@ namespace AKun.EditorTools
             await WaitFor(GameState.FINISHED, 10);
             Check(g.status == GameState.FINISHED && !g.CanHide, "本番の期限で終了");
 
-            await host.StartRound();
-            Check(g.round == 2 && g.status == GameState.PREPARING, $"次のラウンド (round={g.round})");
+            // resultSeconds を付けて始めたので、終わってから 2 秒でサーバーが次のラウンドを始める
+            Check(g.Remaining(DateTime.UtcNow) != null || g.localPhase, "終わった後は次のラウンドまでの期限がある");
+            var until2 = DateTime.UtcNow.AddSeconds(8);
+            while (g.round < 2 && DateTime.UtcNow < until2) await Task.Delay(100);
+            if (g.round < 2) { Debug.Log("[test] サーバーが次のラウンドを始めないので、ホストが始めます (古いサーバー)"); await host.StartRound(); }
+            Check(g.round == 2 && g.status == GameState.PREPARING && g.IsHider, $"次のラウンド (round={g.round})");
+            Check(!host.CanChangeMap, "準備中はマップを替えられない");
             await host.Finish();
             Check(g.status == GameState.FINISHED, "ホストがラウンドを終える");
+
 
             host.Close();
             seeker.Close();
