@@ -25,7 +25,11 @@ namespace Seeker.App
         private Text statusLabel;
         private PhasePanelsView phasePanels;
         private PoseSender poseSender;
+        private const float CaptureMessageSeconds = 3f;
         private string statusBeforeTrackingLost;
+        private string statusBeforeCapture;
+        private string captureMessage;
+        private float captureMessageHideAt;
         private bool wasTrackingLost;
 
         private void Awake()
@@ -36,6 +40,9 @@ namespace Seeker.App
             if (syncedObjects == null) syncedObjects = gameObject.AddComponent<SyncedObjectsController>();
             poseSender = gameObject.AddComponent<PoseSender>();
             poseSender.Initialize(syncedObjects, adapter);
+            var captureInput = gameObject.AddComponent<CaptureInput>();
+            captureInput.Initialize(syncedObjects);
+            captureInput.Captured += OnCaptured;
             syncedObjects.Rejected += () => statusLabel.text = "サーバーに接続を拒否されました";
             syncedObjects.SessionChanged += RenderPhase;
             RenderPhase();
@@ -54,6 +61,24 @@ namespace Seeker.App
         {
             phasePanels.RenderTimer(syncedObjects.Session, syncedObjects.Clock);
             RenderTrackingLost();
+            RestoreStatusAfterCapture();
+        }
+
+        // 演出・スコア HUD は後続タスク。ここでは結果を statusLabel に数秒だけ出す
+        private void OnCaptured(CaptureOutcome outcome)
+        {
+            if (captureMessage == null) statusBeforeCapture = statusLabel.text;
+            captureMessage = outcome.result.Message;
+            captureMessageHideAt = Time.unscaledTime + CaptureMessageSeconds;
+            statusLabel.text = captureMessage;
+        }
+
+        private void RestoreStatusAfterCapture()
+        {
+            if (captureMessage == null || Time.unscaledTime < captureMessageHideAt) return;
+            // 他の処理が文言を書き換えていたら上書きしない
+            if (statusLabel.text == captureMessage) statusLabel.text = statusBeforeCapture;
+            captureMessage = null;
         }
 
         // トラッキング切れの間だけ statusLabel を上書きし、復帰したら直前の文言に戻す
