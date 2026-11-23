@@ -331,6 +331,17 @@ namespace AKun
             spot.gameObject.SetActive(HasSpot && mesh != null);
         }
 
+        // 隠す場所に置いたモデルを手でつまむための球 (ワールド)。モデルの形の外接球
+        public bool SpotGrabSphere(out Vector3 center, out float radius)
+        {
+            center = default; radius = 0;
+            var m = spotMesh.sharedMesh;
+            if (!HasSpot || m == null) return false;
+            center = spot.TransformPoint(m.bounds.center);
+            radius = m.bounds.extents.magnitude * Mathf.Abs(spot.lossyScale.x);
+            return true;
+        }
+
         // レイが当たった所に隠す: 底面をマップの面に付け、上を面の向きに、正面をレイの来た向き (見ている人の方) に向ける
         public void SetSpot(RayHit hit, Vector3 rayDir)
         {
