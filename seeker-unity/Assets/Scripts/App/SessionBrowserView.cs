@@ -10,7 +10,7 @@ using UnityEngine.UI;
 namespace Seeker.App
 {
     /// <summary>
-    /// 接続先と名前を入れ、GET /v1/sessions の一覧から選んで参加する画面（サーバーブラウザ）。
+    /// 接続先と名前を入れ、GET /v1/admin/sessions の一覧から選んで参加する画面（サーバーブラウザ）。
     /// 参加できたら <see cref="Joined"/> に SyncConnection を渡して自分は閉じる。
     /// 判定・保存は Seeker.Sync.Lobby の純 C# に任せ、ここは uGUI の組み立てと呼び出しだけ。
     /// </summary>
@@ -75,7 +75,7 @@ namespace Seeker.App
             ShowMessage("一覧を取得中…");
             try
             {
-                var sessions = await tokens.RunAsync(token => client.ListSessionsAsync(token));
+                var sessions = await client.ListSessionsAsync(AdminToken.Value);
                 if (this == null) return;
                 RenderSessions(sessions);
                 ShowMessage(sessions.Count == 0 ? "参加できるセッションがありません（ホストの作成を待って更新）" : "参加するセッションを選んでください");

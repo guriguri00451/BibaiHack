@@ -8,7 +8,8 @@ using UnityEngine.Networking;
 namespace Seeker.Sync.Lobby
 {
     /// <summary>
-    /// サーバーブラウザが使う REST（POST /v1/guests・GET /v1/sessions・POST /v1/sessions/{id}/join）。
+    /// サーバーブラウザが使う REST（POST /v1/guests・GET /v1/admin/sessions・POST /v1/sessions/{id}/join）。
+    /// 一覧だけは管理 API で、管理トークンを送る（参加はゲストのトークン）。
     /// 失敗は <see cref="LobbyException"/> にする。トークンはログに出さない
     /// </summary>
     public sealed class LobbyClient
@@ -29,9 +30,9 @@ namespace Seeker.Sync.Lobby
             return (string)JObject.Parse(response)["accessToken"];
         }
 
-        public async Task<IReadOnlyList<SessionSummary>> ListSessionsAsync(string token)
+        public async Task<IReadOnlyList<SessionSummary>> ListSessionsAsync(string adminToken)
         {
-            var response = await SendAsync(UnityWebRequest.kHttpVerbGET, $"/sessions?limit={ListLimit}", null, token);
+            var response = await SendAsync(UnityWebRequest.kHttpVerbGET, $"/admin/sessions?limit={ListLimit}", null, adminToken);
             return SessionList.Parse(response);
         }
 
