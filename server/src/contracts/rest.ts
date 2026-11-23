@@ -1,4 +1,12 @@
 import { z } from "@hono/zod-openapi";
+import {
+  ASSET_CONTENT_TYPES,
+  type AssetContentType,
+  DEFAULT_PLAYING_SECONDS,
+  MAX_ASSET_BYTES,
+  MAX_PHASE_SECONDS,
+} from "../game/rules.ts";
+import { TransformSchema } from "./transform.ts";
 
 export const ROLES = ["hider", "seeker"] as const;
 export const SESSION_STATUSES = ["waiting", "preparing", "playing", "finished"] as const;
@@ -74,3 +82,141 @@ export const SessionDetailSchema = z
     players: z.array(PlayerSchema),
   })
   .openapi("SessionDetail");
+
+// ---- ラウンド（仕様書 4章・5.1） ----
+
+const phaseSeconds = z.int().min(1).max(MAX_PHASE_SECONDS);
+
+export const StartRoundRequestSchema = z
+  .object({
+    preparingSeconds: phaseSeconds.openapi({ example: 120 }),
+    playingSeconds: phaseSeconds
+      .optional()
+      .describe(`準備の期限が来てサーバーが自動で本番に入るときの長さ。省くと ${DEFAULT_PLAYING_SECONDS} 秒`),
+    roles: z
+      .array(z.object({ playerId: z.uuid(), role: RoleSchema }))
+      .min(1)
+      .describe("載せなかった参加者は役割なし（null）になる。ドロが1人以上必要"),
+  })
+  .openapi("StartRoundRequest");
+
+export const PlayRoundRequestSchema = z
+  .object({
+    playingSeconds: phaseSeconds
+      .optional()
+      .openapi({ example: 180 })
+      .describe("省くと rounds/start の playingSeconds（それも無ければ既定値）"),
+  })
+  .openapi("PlayRoundRequest");
+
+export const FinishRoundRequestSchema = z.object({}).openapi("FinishRoundRequest");
+
+// ---- アセット（仕様書 5.1） ----
+
+export const AssetContentTypeSchema = z
+  .enum(Object.keys(ASSET_CONTENT_TYPES) as [AssetContentType, ...AssetContentType[]])
+  .openapi("AssetContentType");
+
+export const CreateAssetUploadRequestSchema = z
+  .object({
+    sessionId: z.uuid(),
+    contentType: AssetContentTypeSchema.openapi({ example: "model/gltf-binary" }),
+    sizeBytes: z.int().min(1).max(MAX_ASSET_BYTES).openapi({ example: 204800 }),
+  })
+  .openapi("CreateAssetUploadRequest");
+
+export const CreateAssetUploadResponseSchema = z
+  .object({
+    assetKey: z.string().openapi({ example: "sessions/<session-id>/assets/<asset-id>.glb" }),
+    uploadUrl: z.url().describe("この URL へ本体を PUT する。Content-Type と大きさは申告どおりにする"),
+    method: z.literal("PUT"),
+    headers: z.record(z.string(), z.string()),
+    expiresAt: z.iso.datetime(),
+  })
+  .openapi("CreateAssetUploadResponse");
+
+export const AssetDownloadQuerySchema = z.object({
+  key: z.string().min(1).max(512).openapi({ param: { name: "key", in: "query" } }),
+});
+
+export const AssetDownloadResponseSchema = z
+  .object({ url: z.url(), expiresAt: z.iso.datetime() })
+  .openapi("AssetDownloadResponse");
+
+// ---- オブジェクト（仕様書 5.1） ----
+
+export const ObjectIdParamSchema = z.object({
+  id: z.uuid().openapi({ param: { name: "id", in: "path" } }),
+  objectId: z.uuid().openapi({ param: { name: "objectId", in: "path" } }),
+});
+
+export const CreateObjectRequestSchema = z
+  .object({ assetKey: z.string().min(1).max(512), transform: TransformSchema })
+  .openapi("CreateObjectRequest");
+
+export const UpdateObjectRequestSchema = z
+  .object({ assetKey: z.string().min(1).max(512).optional(), transform: TransformSchema.optional() })
+  .refine((b) => b.assetKey !== undefined || b.transform !== undefined, {
+    message: "assetKey か transform のどちらかが必要です",
+  })
+  .openapi("UpdateObjectRequest");
+
+/** 所有ドロに返すオブジェクト */
+export const GameObjectSchema = z
+  .object({
+    id: z.uuid(),
+    round: z.int().min(1),
+    assetKey: z.string(),
+    transform: TransformSchema,
+    isDisguise: z.boolean(),
+    createdAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime(),
+  })
+  .openapi("GameObject");
+
+// ---- 捕獲（仕様書 5.1） ----
+
+export const CaptureRequestSchema = z.object({ objectId: z.uuid() }).openapi("CaptureRequest");
+
+export const CaptureResponseSchema = z
+  .object({
+    result: z.enum(["caught", "miss"]),
+    scoreDelta: z.int(),
+    score: z.int().describe("このケイの累計得点"),
+    caughtPlayerId: z.uuid().optional().describe("caught のとき、見つかったドロ"),
+  })
+  .openapi("CaptureResponse");
+
+// ---- マップ ----
+
+export const MapIdParamSchema = z.object({
+  mapId: z
+    .string()
+    .regex(/^[a-z0-9-]{1,64}$/)
+    .openapi({ param: { name: "mapId", in: "path" }, example: "bibai-museum" }),
+});
+
+export const MapDefinitionSchema = z
+  .object({
+    mapId: z.string(),
+    name: z.string(),
+    modelUrl: z.url().describe("マップの GLB（認証なしで取れる）"),
+    transform: TransformSchema.describe("マップの GLB を共有マップ座標に置く Transform"),
+  })
+  .openapi("MapDefinition");
+
+// ---- リプレイ（仕様書 7章） ----
+
+export const ReplayParamSchema = z.object({
+  id: z.uuid().openapi({ param: { name: "id", in: "path" } }),
+  round: z.coerce.number().int().min(1).openapi({ param: { name: "round", in: "path" } }),
+});
+
+export const ReplayResponseSchema = z
+  .object({
+    sessionId: z.uuid(),
+    round: z.int(),
+    snapshots: z.array(z.record(z.string(), z.unknown())).describe("内部 Snapshot（擬態先を含む）。seq 順"),
+    events: z.array(z.record(z.string(), z.unknown())).describe("JSONL のイベント。seq 順"),
+  })
+  .openapi("Replay");

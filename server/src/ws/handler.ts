@@ -1,8 +1,8 @@
 import type { ServerWebSocket, WebSocketHandler } from "bun";
 import { verifyToken } from "../auth/token.ts";
-import { normalizeTransform } from "../contracts/transform.ts";
 import { ClientMessageSchema, type ServerMessage, WS_CLOSE } from "../contracts/ws.ts";
-import { canSeePlayerPose, type GameRegistry, type GameState } from "../game/registry.ts";
+import type { GameService } from "../game/service.ts";
+import { ApiError } from "../http/errors.ts";
 
 export type WsData = {
   sessionId?: string;
@@ -14,41 +14,17 @@ type Socket = ServerWebSocket<WsData>;
 /** 接続後この時間内に auth が来なければ切る */
 const AUTH_TIMEOUT_MS = 5_000;
 
-export function createWsHandler(deps: { registry: GameRegistry; jwtSecret: string }) {
-  const { registry, jwtSecret } = deps;
-  /** sessionId → playerId → 接続 */
-  const conns = new Map<string, Map<string, Socket>>();
+export function createWsHandler(deps: { game: GameService; jwtSecret: string }) {
+  const { game, jwtSecret } = deps;
+  const { registry, hub } = game;
 
   const send = (ws: Socket, msg: ServerMessage): void => void ws.send(JSON.stringify(msg));
-  const sendError = (ws: Socket, code: string, message: string): void =>
-    send(ws, { type: "error", timestamp: Date.now(), payload: { code, message } });
-
-  function snapshotFor(state: GameState, playerId: string): ServerMessage {
-    const me = state.players.get(playerId)!;
-    return {
-      type: "session.snapshot",
-      round: state.round,
-      seq: state.seq,
+  const sendError = (ws: Socket, code: string, message: string, requestId?: string): void =>
+    send(ws, {
+      type: "error",
       timestamp: Date.now(),
-      payload: {
-        session: {
-          id: state.sessionId,
-          status: state.status,
-          round: state.round,
-          phaseEndsAt: state.phaseEndsAt?.toISOString() ?? null,
-        },
-        you: { playerId, role: me.role },
-        players: [...state.players.values()].map((p) => ({
-          playerId: p.playerId,
-          name: p.name,
-          role: p.role,
-          isCaught: p.isCaught,
-          connected: p.connected,
-          transform: canSeePlayerPose(state, me, p) ? p.transform : null,
-        })),
-      },
-    };
-  }
+      payload: { code, message, ...(requestId ? { requestId } : {}) },
+    });
 
   async function handleAuth(ws: Socket, accessToken: string, sessionId: string): Promise<void> {
     const userId = await verifyToken(accessToken, jwtSecret);
@@ -63,16 +39,13 @@ export function createWsHandler(deps: { registry: GameRegistry; jwtSecret: strin
     ws.data.sessionId = sessionId;
     ws.data.playerId = player.playerId;
 
-    let room = conns.get(sessionId);
-    if (!room) conns.set(sessionId, (room = new Map()));
-    const old = room.get(player.playerId);
-    room.set(player.playerId, ws);
-    old?.close(WS_CLOSE.REPLACED, "replaced by a new connection");
+    hub.attach(sessionId, player.playerId, ws)?.close(WS_CLOSE.REPLACED, "replaced by a new connection");
 
     player.connected = true;
     // 再接続したら clientSeq は振り出しから数え直してよい
     player.lastClientSeq = -1;
-    send(ws, snapshotFor(state, player.playerId));
+    for (const o of state.objects.values()) if (o.playerId === player.playerId) o.lastClientSeq = -1;
+    send(ws, game.snapshotMessage(state, player));
   }
 
   const websocket: WebSocketHandler<WsData> = {
@@ -100,32 +73,29 @@ export function createWsHandler(deps: { registry: GameRegistry; jwtSecret: strin
         return handleAuth(ws, msg.payload.accessToken, msg.payload.sessionId);
       }
 
+      const requestId = msg.payload.requestId;
       const { sessionId, playerId } = ws.data;
-      if (!sessionId || !playerId) return sendError(ws, "UNAUTHORIZED", "Send auth first.");
+      if (!sessionId || !playerId) return sendError(ws, "UNAUTHORIZED", "Send auth first.", requestId);
       const state = await registry.load(sessionId);
       const me = state?.players.get(playerId);
       if (!state || !me) return;
 
-      switch (msg.type) {
-        case "player.transform": {
-          if (msg.payload.clientSeq <= me.lastClientSeq) return; // 重複・逆順は捨てる
-          me.lastClientSeq = msg.payload.clientSeq;
-          me.transform = normalizeTransform(msg.payload.transform);
-          state.seq += 1;
-          const out: ServerMessage = {
-            type: "player.transform",
-            round: state.round,
-            seq: state.seq,
-            timestamp: Date.now(),
-            payload: { playerId, transform: me.transform },
-          };
-          const text = JSON.stringify(out);
-          for (const [otherId, sock] of conns.get(sessionId) ?? []) {
-            const other = state.players.get(otherId);
-            if (otherId !== playerId && other && canSeePlayerPose(state, other, me)) sock.send(text);
-          }
-          return;
+      try {
+        switch (msg.type) {
+          case "player.transform":
+            game.playerTransform(state, me, msg.payload.clientSeq, msg.payload.transform);
+            break;
+          case "object.transform":
+            game.objectTransform(state, me, msg.payload.objectId, msg.payload.clientSeq, msg.payload.transform);
+            break;
         }
+        if (requestId) {
+          send(ws, { type: "command.ack", timestamp: Date.now(), payload: { requestId, command: msg.type } });
+        }
+      } catch (e) {
+        if (e instanceof ApiError) return sendError(ws, e.code, e.message, requestId);
+        console.error(e);
+        sendError(ws, "INTERNAL", "Internal server error.", requestId);
       }
     },
 
@@ -133,10 +103,7 @@ export function createWsHandler(deps: { registry: GameRegistry; jwtSecret: strin
       clearTimeout(ws.data.authTimer);
       const { sessionId, playerId } = ws.data;
       if (!sessionId || !playerId) return;
-      const room = conns.get(sessionId);
-      if (room?.get(playerId) !== ws) return; // 入れ替わった古い接続
-      room.delete(playerId);
-      if (room.size === 0) conns.delete(sessionId);
+      if (!hub.detach(sessionId, playerId, ws)) return; // 入れ替わった古い接続
       const state = await registry.load(sessionId);
       const me = state?.players.get(playerId);
       if (me) me.connected = false;

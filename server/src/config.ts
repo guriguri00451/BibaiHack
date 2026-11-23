@@ -9,6 +9,13 @@ export type Config = {
   basePath: string;
   /** 外から見たこの環境の URL（OpenAPI の servers に載せる） */
   publicUrl: string;
+  /**
+   * PUBLIC_URL を明示したときだけ入る。署名付き URL やマップの modelUrl をこの URL で作る。
+   * 無ければリクエストの Host から作る（手元の LAN で実機から繋ぐとき localhost にならないように）
+   */
+  assetBaseUrl?: string;
+  /** GLB・ログ・Snapshot の保存先ディレクトリ。未指定ならメモリ上（再起動で消える） */
+  storageDir?: string;
 };
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -37,8 +44,10 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     port,
     basePath,
     publicUrl,
+    assetBaseUrl: env.PUBLIC_URL ? publicUrl : undefined,
     databaseUrl: env.DATABASE_URL || undefined,
     pgliteDir: env.PGLITE_DIR || undefined,
+    storageDir: env.STORAGE_DIR || undefined,
     jwtSecret,
   };
 }

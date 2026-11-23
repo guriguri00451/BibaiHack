@@ -41,6 +41,9 @@ services:
       PUBLIC_URL: https://bibai.t0waxx.com
       DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_prod
       JWT_SECRET: ${JWT_SECRET_PROD:?}
+      STORAGE_DIR: /data/storage
+    volumes:
+      - storage-prod:/data/storage
 
   server-stg:
     <<: *server
@@ -52,6 +55,9 @@ services:
       PUBLIC_URL: https://bibai.t0waxx.com
       DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_stg
       JWT_SECRET: ${JWT_SECRET_STG:?}
+      STORAGE_DIR: /data/storage
+    volumes:
+      - storage-stg:/data/storage
 
   server-dev:
     <<: *server
@@ -63,6 +69,9 @@ services:
       PUBLIC_URL: https://bibai.t0waxx.com
       DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_dev
       JWT_SECRET: ${JWT_SECRET_DEV:?}
+      STORAGE_DIR: /data/storage
+    volumes:
+      - storage-dev:/data/storage
 
   server-a-kun-01:
     <<: *server
@@ -74,6 +83,9 @@ services:
       PUBLIC_URL: https://bibai.t0waxx.com
       DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_a_kun_01
       JWT_SECRET: ${JWT_SECRET_A_KUN_01:?}
+      STORAGE_DIR: /data/storage
+    volumes:
+      - storage-a-kun-01:/data/storage
 
   server-a-kun-02:
     <<: *server
@@ -85,6 +97,9 @@ services:
       PUBLIC_URL: https://bibai.t0waxx.com
       DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_a_kun_02
       JWT_SECRET: ${JWT_SECRET_A_KUN_02:?}
+      STORAGE_DIR: /data/storage
+    volumes:
+      - storage-a-kun-02:/data/storage
 
   server-a-kun-03:
     <<: *server
@@ -96,6 +111,9 @@ services:
       PUBLIC_URL: https://bibai.t0waxx.com
       DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_a_kun_03
       JWT_SECRET: ${JWT_SECRET_A_KUN_03:?}
+      STORAGE_DIR: /data/storage
+    volumes:
+      - storage-a-kun-03:/data/storage
 
   server-so-ma-01:
     <<: *server
@@ -107,6 +125,9 @@ services:
       PUBLIC_URL: https://bibai.t0waxx.com
       DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_so_ma_01
       JWT_SECRET: ${JWT_SECRET_SO_MA_01:?}
+      STORAGE_DIR: /data/storage
+    volumes:
+      - storage-so-ma-01:/data/storage
 
   server-so-ma-02:
     <<: *server
@@ -118,6 +139,9 @@ services:
       PUBLIC_URL: https://bibai.t0waxx.com
       DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_so_ma_02
       JWT_SECRET: ${JWT_SECRET_SO_MA_02:?}
+      STORAGE_DIR: /data/storage
+    volumes:
+      - storage-so-ma-02:/data/storage
 
   server-so-ma-03:
     <<: *server
@@ -129,6 +153,18 @@ services:
       PUBLIC_URL: https://bibai.t0waxx.com
       DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_so_ma_03
       JWT_SECRET: ${JWT_SECRET_SO_MA_03:?}
+      STORAGE_DIR: /data/storage
+    volumes:
+      - storage-so-ma-03:/data/storage
 
 volumes:
   pgdata:
+  storage-prod:
+  storage-stg:
+  storage-dev:
+  storage-a-kun-01:
+  storage-a-kun-02:
+  storage-a-kun-03:
+  storage-so-ma-01:
+  storage-so-ma-02:
+  storage-so-ma-03:

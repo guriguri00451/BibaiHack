@@ -1,22 +1,35 @@
 import type { Server } from "bun";
 import type { Db } from "./db/client.ts";
-import { GameRegistry } from "./game/registry.ts";
 import { createApp } from "./http/app.ts";
 import { errorBody } from "./http/errors.ts";
+import type { MapCatalog } from "./maps/maps.ts";
+import { buildServices } from "./services.ts";
+import type { ObjectStorage } from "./storage/storage.ts";
 import { createWsHandler, type WsData } from "./ws/handler.ts";
 
 /**
  * REST（Hono）と WebSocket（/v1/ws）を1つの Bun.serve にまとめる。
  * basePath（例 "/a-kun-01"）があれば、その前置きを外してから振り分ける。前置きの無いリクエストは 404
  */
-export function createServer(deps: { db: Db; jwtSecret: string; basePath?: string; publicUrl?: string }) {
+export function createServer(deps: {
+  db: Db;
+  jwtSecret: string;
+  basePath?: string;
+  publicUrl?: string;
+  /** 署名付き URL・modelUrl を作る URL。無ければリクエストの Host から作る */
+  assetBaseUrl?: string;
+  storage?: ObjectStorage;
+  maps?: MapCatalog;
+  logFlushIntervalMs?: number;
+}) {
   const basePath = deps.basePath ?? "";
-  const registry = new GameRegistry(deps.db);
-  const app = createApp(deps);
-  const { websocket } = createWsHandler({ registry, jwtSecret: deps.jwtSecret });
+  const services = buildServices(deps);
+  const app = createApp({ ...deps, ...services });
+  const { websocket } = createWsHandler({ game: services.game, jwtSecret: deps.jwtSecret });
 
   return {
-    registry,
+    ...services,
+    registry: services.game.registry,
     fetch(req: Request, server: Server<WsData>) {
       const url = new URL(req.url);
       if (basePath) {
@@ -33,5 +46,10 @@ export function createServer(deps: { db: Db; jwtSecret: string; basePath?: strin
       return app.fetch(basePath ? new Request(url.toString(), req) : req);
     },
     websocket,
+    /** タイマーを止め、残っているログを書き出す */
+    async dispose() {
+      services.game.hub.closeAll();
+      await services.game.dispose();
+    },
   };
 }
