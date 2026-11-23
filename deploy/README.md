@@ -82,7 +82,7 @@ deploy/db.sh psql dev 'select count(*) from users'
 2. `deploy/render.sh` で `compose.yaml` と `cloudflared/config.yml` を作り直してコミット
 3. `deploy/deploy.sh <新しい環境> <ブランチ>`
 
-足りない `JWT_SECRET_*` はデプロイ時に VM 上で作られる。トンネルの設定が変わると cloudflared が再起動する（全環境が数秒切れる）。
+足りない `JWT_SECRET_*`・`ADMIN_TOKEN` はデプロイ時に VM 上で作られる。トンネルの設定が変わると cloudflared が再起動する（全環境が数秒切れる）。
 減らすときは `envs.txt` から消して render → 残っている環境のどれかをデプロイし、VM で `docker compose up -d --remove-orphans` を実行する。DB は残るので、要らなければ `db.sh psql` で `DROP DATABASE`。
 
 ## VM の中
@@ -92,10 +92,12 @@ deploy/db.sh psql dev 'select count(*) from users'
   compose.yaml               deploy/compose.yaml の写し（生成物）
   cloudflared/config.yml     トンネルの振り分け（生成物）
   cloudflared/credentials.json  トンネルの秘密鍵（リポジトリに入れない）
-  .env                       POSTGRES_PASSWORD と JWT_SECRET_*（VM 上でだけ生成。mode 600）
+  .env                       POSTGRES_PASSWORD・JWT_SECRET_*・ADMIN_TOKEN（VM 上でだけ生成。mode 600）
   envs/<環境>/server/          デプロイしたソース
   envs/<環境>/DEPLOYED         入っているブランチ・コミット・日時・実行者
 ```
+
+管理画面（`https://bibai.t0waxx.com/<環境>/admin`、prod は `/admin`）のトークンは全環境で共通の `ADMIN_TOKEN`。見るには `ssh -J root@wds-pve towa@192.168.11.2 grep ADMIN_TOKEN /opt/bibai/.env`。
 
 VM に入る：`ssh -J root@wds-pve towa@192.168.11.2`（VM は tailnet に居ない。IP は DHCP なので変わることがある。変わったら `BIBAI_VM=towa@<新しいIP>` を付けて実行する）
 

@@ -18,12 +18,14 @@ import {
   JoinSessionResponseSchema,
   MapDefinitionSchema,
   MapIdParamSchema,
+  MapListResponseSchema,
   ObjectIdParamSchema,
   PlayRoundRequestSchema,
   ReplayParamSchema,
   ReplayResponseSchema,
   SessionDetailSchema,
   SessionIdParamSchema,
+  SetMapRequestSchema,
   StartRoundRequestSchema,
   UpdateObjectRequestSchema,
 } from "../contracts/rest.ts";
@@ -400,6 +402,59 @@ export function registerRoutes(app: OpenAPIHono, deps: ApiDeps) {
     },
   );
 
+  // ---- POST /v1/sessions/{id}/rounds/stop-cycle ----
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/sessions/{id}/rounds/stop-cycle",
+      summary: "次のラウンドへの自動の進行（rounds/start の resultSeconds）をやめる",
+      security,
+      request: { params: SessionIdParamSchema },
+      responses: { 200: json(SessionDetailSchema, "OK"), ...errors(401, 403, 404, 409) },
+    }),
+    async (c) => {
+      const userId = await requireUser(c, deps);
+      const { id } = c.req.valid("param");
+      return c.json(await game.stopCycle(id, userId), 200);
+    },
+  );
+
+  // ---- PUT /v1/sessions/{id}/map ----
+  app.openapi(
+    createRoute({
+      method: "put",
+      path: "/v1/sessions/{id}/map",
+      summary: "マップを替える（ホスト。待機中と、ラウンドが終わった後だけ）",
+      security,
+      request: { params: SessionIdParamSchema, ...body(SetMapRequestSchema) },
+      responses: { 200: json(SessionDetailSchema, "OK"), ...errors(400, 401, 403, 404, 409) },
+    }),
+    async (c) => {
+      const userId = await requireUser(c, deps);
+      const { id } = c.req.valid("param");
+      return c.json(await game.setMap(id, userId, c.req.valid("json").mapId), 200);
+    },
+  );
+
+  const modelUrl = (c: Context, m: { mapId: string; version: string }) =>
+    `${base(c)}/v1/maps/${m.mapId}/model.glb` + (m.version === "builtin" ? "" : `?v=${m.version}`);
+
+  // ---- GET /v1/maps ----
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/maps",
+      summary: "選べるマップの一覧（組み込みと、管理画面から登録したもの）",
+      security,
+      responses: { 200: json(MapListResponseSchema, "OK"), ...errors(401) },
+    }),
+    async (c) => {
+      await requireUser(c, deps);
+      const list = await maps.list();
+      return c.json({ maps: list.map((m) => ({ mapId: m.mapId, name: m.name, modelUrl: modelUrl(c, m) })) }, 200);
+    },
+  );
+
   // ---- GET /v1/maps/{mapId} ----
   app.openapi(
     createRoute({
@@ -413,25 +468,17 @@ export function registerRoutes(app: OpenAPIHono, deps: ApiDeps) {
     async (c) => {
       await requireUser(c, deps);
       const { mapId } = c.req.valid("param");
-      const m = maps.get(mapId);
+      const m = await maps.get(mapId);
       if (!m) throw new ApiError(404, "MAP_NOT_FOUND", "Map not found.");
-      return c.json(
-        {
-          mapId,
-          name: m.def.name,
-          modelUrl: `${base(c)}/v1/maps/${mapId}/model.glb`,
-          transform: m.def.transform,
-        },
-        200,
-      );
+      return c.json({ mapId, name: m.name, modelUrl: modelUrl(c, m), transform: m.transform }, 200);
     },
   );
 
   // マップの GLB は秘密ではないので認証なし（GLB ローダーがヘッダーを付けられなくても読めるように）
-  app.get("/v1/maps/:mapId/model.glb", (c) => {
-    const m = maps.get(c.req.param("mapId"));
-    if (!m) throw new ApiError(404, "MAP_NOT_FOUND", "Map not found.");
-    return c.body(m.glb as Uint8Array<ArrayBuffer>, 200, {
+  app.get("/v1/maps/:mapId/model.glb", async (c) => {
+    const glb = await maps.glb(c.req.param("mapId"));
+    if (!glb) throw new ApiError(404, "MAP_NOT_FOUND", "Map not found.");
+    return c.body(glb as Uint8Array<ArrayBuffer>, 200, {
       "content-type": "model/gltf-binary",
       "cache-control": "public, max-age=300",
     });

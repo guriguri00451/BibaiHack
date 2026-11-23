@@ -15,6 +15,7 @@ const srv = createServer({
   storage: createStorage(config.storageDir),
   // S3 を設定していなければ、GLB もサーバー自身が storage に受ける
   assetStorage: config.s3 && createS3Storage(config.s3),
+  admin: config.admin,
 });
 if (!config.storageDir) console.warn("STORAGE_DIR が未設定のため、ログ（S3 が無ければ GLB も）はメモリに置きます（再起動で消えます）");
 
