@@ -31,6 +31,12 @@ namespace Seeker.Sync
         public event Action SessionChanged;
 
         /// <summary>
+        /// snapshot がセッションの mapId を載せてきたとき（同じ mapId でも毎回）。
+        /// 同じ mapId でも GLB が差し替わっていることがあるので、変化の判定は受け手がマップ定義を見て行う。
+        /// </summary>
+        public event Action<string> MapIdReceived;
+
+        /// <summary>
         /// 接続情報が揃ってから呼ぶ（呼ぶまでは接続しない）。1インスタンスにつき1回だけ。
         /// セッションを切り替えるときは GameObject ごと作り直す。
         /// </summary>
@@ -76,6 +82,8 @@ namespace Seeker.Sync
                 var message = ServerMessage.Parse(json);
                 if (message.Timestamp.HasValue) clock.Observe(message.Timestamp.Value);
                 if (session.Apply(message)) SessionChanged?.Invoke();
+                var mapId = GameSessionState.ReadMapId(message);
+                if (mapId != null) MapIdReceived?.Invoke(mapId);
                 changes = store.Apply(message);
             }
             catch (System.Exception exception) when (exception is System.FormatException || exception is Newtonsoft.Json.JsonException)

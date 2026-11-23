@@ -34,7 +34,7 @@ namespace Seeker.Editor
         {
             ConfigurePlayer();
             ConfigureXrManagement();
-            AddArBackgroundFeature();
+            AddRendererFeatures();
             var library = CreateReferenceImageLibrary();
             CreateScene(library);
             AssetDatabase.SaveAssets();
@@ -47,12 +47,13 @@ namespace Seeker.Editor
             PlayerSettings.companyName = "BibaiHack";
             PlayerSettings.productName = "Seeker";
             PlayerSettings.SetApplicationIdentifier(android, "com.bibaihack.seeker");
-            PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel26;
+            // ARCore 必須アプリを Vulkan で動かすには API 29 以上が要る（ビルド時に ARCore が弾く）
+            PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel29;
             PlayerSettings.SetScriptingBackend(android, ScriptingImplementation.IL2CPP);
             PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
-            // ARCore のカメラ背景は GLES3 のほうが事例が多く安定するため固定する
+            // Gaussian Splatting の並べ替えシェーダーが Wave 命令を使い GLES3 では動かないため、Vulkan に固定する
             PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.Android, false);
-            PlayerSettings.SetGraphicsAPIs(BuildTarget.Android, new[] { UnityEngine.Rendering.GraphicsDeviceType.OpenGLES3 });
+            PlayerSettings.SetGraphicsAPIs(BuildTarget.Android, new[] { UnityEngine.Rendering.GraphicsDeviceType.Vulkan });
             PlayerSettings.defaultInterfaceOrientation = UIOrientation.Portrait;
         }
 
@@ -77,17 +78,33 @@ namespace Seeker.Editor
             EditorUtility.SetDirty(manager);
         }
 
-        // URP ではカメラ映像の描画に ARBackgroundRendererFeature が必須。無いと背景が真っ黒になる
-        private static void AddArBackgroundFeature()
+        /// <summary>
+        /// URP の Renderer Feature をそろえる（足りないものだけ足す）。
+        /// 既存プロジェクトに足したいときは -executeMethod Seeker.Editor.ProjectSetup.AddRendererFeatures で呼ぶ。
+        /// </summary>
+        public static void AddRendererFeatures()
+        {
+            // カメラ映像の描画に必須。無いと背景が真っ黒になる
+            AddRendererFeature(typeof(ARBackgroundRendererFeature));
+            // Vulkan では ARCore がカメラ映像の受け渡しをこの Feature の描画イベントで行う。無いと背景が黒くトラッキングも始まらない
+            AddRendererFeature(typeof(ARCommandBufferSupportRendererFeature));
+            // マップの Gaussian Splat（SPZ）を描く。パッケージ側で internal なので型名で引く
+            var splatFeature = System.Type.GetType("GaussianSplatting.Runtime.GaussianSplatURPFeature, GaussianSplatting")
+                ?? throw new System.InvalidOperationException("GaussianSplatURPFeature が見つからない（UnityGaussianSplatting と URP が入っているか確認）");
+            AddRendererFeature(splatFeature);
+            AssetDatabase.SaveAssets();
+        }
+
+        private static void AddRendererFeature(System.Type featureType)
         {
             foreach (var guid in AssetDatabase.FindAssets("t:UniversalRendererData"))
             {
                 var path = AssetDatabase.GUIDToAssetPath(guid);
                 var data = AssetDatabase.LoadAssetAtPath<UniversalRendererData>(path);
-                if (data.rendererFeatures.Exists(f => f is ARBackgroundRendererFeature)) continue;
+                if (data.rendererFeatures.Exists(f => f != null && f.GetType() == featureType)) continue;
 
-                var feature = ScriptableObject.CreateInstance<ARBackgroundRendererFeature>();
-                feature.name = "ARBackgroundRendererFeature";
+                var feature = ScriptableObject.CreateInstance(featureType);
+                feature.name = featureType.Name;
                 AssetDatabase.AddObjectToAsset(feature, data);
                 AssetDatabase.TryGetGUIDAndLocalFileIdentifier(feature, out _, out long localId);
 

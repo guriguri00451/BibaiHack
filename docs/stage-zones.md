@@ -33,7 +33,17 @@ https://bibai.t0waxx.com/v1/maps/<mapId>/splat.spz          # prod
 - クライアントは `GET /v1/maps/{mapId}` の `splatUrl` を使うのがよい。末尾に `?v=…` が付き、差し替えると変わるのでキャッシュを外せる（上の URL は `?v=` なしでも同じものが返る）
 - ゾーンのマップは SPZ だけなので、`modelUrl`（`model.glb`）は何も無いシーンを返す
 - 置き方の `transform` は無変換（原点・回転なし・大きさ 1）。マーカーの原点にどう重ねるかは、実機で見て管理画面（`/<環境>/admin` のマップ）から直す。環境ごとに別の値を持つ
+  - 今のゾーンは Y が下向きのまま入っていて、無変換だと天井と床が逆に見える。`rotation` を `[1,0,0,0]`（X 軸まわり 180°）にすると直る（ゾーンH で実機確認）
 - 部屋のマップにするには、ホストが待機中に `PUT /v1/sessions/{id}/map`（`{"mapId":"bibai-zone-h"}`）を送るか、管理画面のセッション一覧で選ぶ
+
+## スマホ向けに軽くする
+
+点が100万を超えるゾーンはスマホで重い。`deploy/spz_decimate.py` で、薄くて小さい点から捨てた SPZ を作り、管理画面から差し替える。ゾーンH は半分（59.8万点・11.2MB）で見た目を保てた。
+
+```sh
+uv run --with numpy --with zstandard deploy/spz_decimate.py H.spz H-half.spz --keep 0.5          # 点を半分に
+uv run --with numpy --with zstandard deploy/spz_decimate.py H.spz H-half.spz --keep 0.5 --sh 1   # SH も 1 次に落とす
+```
 
 ## 登録し直す
 

@@ -112,6 +112,38 @@ namespace Seeker.Ar.Tests
             Assert.That(state.Phase, Is.EqualTo(GamePhase.Waiting));
         }
 
+        [Test]
+        public void ReadMapId_ReturnsSessionMapId_FromSnapshot()
+        {
+            var message = Message("session.snapshot", 1, "{\"session\":{\"status\":\"waiting\",\"mapId\":\"bibai-museum\"}}");
+
+            Assert.That(GameSessionState.ReadMapId(message), Is.EqualTo("bibai-museum"));
+        }
+
+        [Test]
+        public void ReadMapId_ReturnsNull_ForNonSnapshotMessage()
+        {
+            var message = Message("session.phase_changed", 1, "{\"session\":{\"mapId\":\"bibai-museum\"}}");
+
+            Assert.That(GameSessionState.ReadMapId(message), Is.Null);
+        }
+
+        [Test]
+        public void ReadMapId_ReturnsNull_WhenSnapshotHasNoSession()
+        {
+            var message = Message("session.snapshot", 1, "{\"status\":\"waiting\"}");
+
+            Assert.That(GameSessionState.ReadMapId(message), Is.Null);
+        }
+
+        [Test]
+        public void ReadMapId_ReturnsNull_WhenMapIdIsEmpty()
+        {
+            var message = Message("session.snapshot", 1, "{\"session\":{\"mapId\":\"\"}}");
+
+            Assert.That(GameSessionState.ReadMapId(message), Is.Null);
+        }
+
         private static ServerMessage Raw(string json) => ServerMessage.Parse(json);
 
         private const string RealSnapshot =
