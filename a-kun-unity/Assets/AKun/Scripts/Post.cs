@@ -31,6 +31,8 @@ namespace AKun
         string editingId, disguisedId;
         bool busy;
         int lastRound = -1;
+        string lastStatus;
+        bool lastCaught, lastConnected = true;
         readonly ButtonPanel xrPanel, hidePanel, gamePanel;
         ClayApp.ExportResult? pending; // 隠す場所を選んでいる間の、投稿する形
 
@@ -176,6 +178,56 @@ namespace AKun
             return $"投稿 {posted.Count} 件 · {target.Label}{e}";
         }
 
+        // ---------- 「今やること」の帯 ----------
+        public struct GuideLine { public string main, sub; public string[] steps; public int step; }
+        static readonly string[] STEPS_GAME = { "つくる", "隠す", "化ける", "待つ" };
+        static readonly string[] STEPS_LOCAL = { "つくる", "隠す", "できた" };
+
+        // 今の状態から、体験者にいちばん大事な一言を選ぶ
+        public GuideLine Guide(string mode, bool hiding, bool hasSpot)
+        {
+            var s = Server;
+            var g = s?.game;
+            string[] steps = s != null ? STEPS_GAME : STEPS_LOCAL;
+            GuideLine L(string main, string sub, int step) => new GuideLine { main = main, sub = sub, steps = steps, step = step };
+
+            if (s != null)
+            {
+                if (!s.Connected) return L("サーバーとの接続が切れています", "つながるまで、粘土はそのまま作れます", -1);
+                if (g.IsCaught) return L("見つかった！", "このラウンドはもう動かせません。次のラウンドを待とう", -1);
+                switch (g.status)
+                {
+                    case GameState.WAITING:
+                        return L("もうすぐ始まります", g.IsHost ? "ケイが入ったら、右のパネルの「準備をはじめる」" : "ホストが始めるまで、粘土で練習できます", 0);
+                    case GameState.FINISHED:
+                        return L("ラウンド終了", g.IsHost ? "右のパネルの「次のラウンドへ」で続ける" : "次のラウンドを待とう", -1);
+                }
+                if (g.myRole == "seeker") return L("このラウンドはケイ (探す側) です", "スマホで探す人を応援しよう", -1);
+            }
+            if (busy) return L("送信中…", "少し待ってください", hiding ? 1 : 0);
+            if (hiding)
+                return hasSpot
+                    ? L("ここでよければ「ここに隠す」", "つまんだまま動かすと場所を変えられる。何もない所をつまむとマップが動く", 1)
+                    : L("マップを指して、つまんで隠す場所を選ぼう", "何もない所をつまむとマップが動く。両手で回す・大きさを変える", 1);
+
+            if (posted.Count == 0 || Editing == null)
+            {
+                string sub = mode == "paint" ? "人差し指の先で塗る。色は左のパネルか、左手のひらを上に向けて選ぶ" : "軽く触れる=なでる、深く押す=こねる、つまむ=伸ばす";
+                string main = mode == "paint" ? "好きな色を塗ろう。できたら「投稿する」" : "粘土をこねて形を作ろう。できたら「投稿する」";
+                return L(main, sub, 0);
+            }
+            if (s != null && disguisedId == null)
+                return L($"#{Editing.n} に化けよう", "上の「化ける」を押すと、その形に化けてケイから隠れる", 2);
+            if (s != null)
+            {
+                string sub = $"形を直したら「#{Editing.n} を更新」で隠し直せる";
+                return g.status == GameState.PLAYING
+                    ? L("ケイが探しています。見つからないように！", sub, 3)
+                    : L("隠れました。本番が始まるのを待とう", sub, 3);
+            }
+            return L($"#{Editing.n} を隠しました", $"直したら「#{Editing.n} を更新」、別の形は「新しく作る」", 2);
+        }
+
         // 体積をそろえるために大きさを直した倍率 (ほぼ 1 のときは出さない)
         static string SizeNote(ClayApp.ExportResult ex) => Mathf.Abs(ex.factor - 1) > 0.01f ? $"、大きさを ×{ex.factor:0.00} にそろえた" : "";
         static string Kb(int n) => $"{Mathf.Max(1, Mathf.RoundToInt(n / 1024f))}KB";
@@ -184,7 +236,7 @@ namespace AKun
         async void DoPost()
         {
             if (busy) return;
-            if (Blocked != null) { app.Log($"今は投稿できません: {Blocked}"); return; }
+            if (Blocked != null) { Notify($"今は投稿できません: {Blocked}", Hud.WARN, "error"); return; }
             busy = true;
             try
             {
@@ -199,7 +251,7 @@ namespace AKun
             }
             catch (Exception err)
             {
-                app.Log($"投稿できませんでした: {err.Message}");
+                Notify($"投稿できませんでした: {err.Message}", Hud.ERROR, "error");
             }
             finally
             {
@@ -211,7 +263,7 @@ namespace AKun
         async void ConfirmHide()
         {
             if (busy || pending == null || !app.map.HasSpot) return;
-            if (Blocked != null) { app.Log($"今は投稿できません: {Blocked}"); EndChoosing(); return; }
+            if (Blocked != null) { Notify($"今は投稿できません: {Blocked}", Hud.WARN, "error"); EndChoosing(); return; }
             busy = true;
             var ex = pending.Value;
             int round = Server?.game.round ?? 0;
@@ -226,6 +278,8 @@ namespace AKun
                     item.spotPos = app.map.SpotPosition; item.spotRot = app.map.SpotRotation;
                     string path = Save(item);
                     app.Log($"#{item.n} を更新して隠しました ({Kb(ex.bytes.Length)}{SizeNote(ex)})");
+                    app.hud.Toast($"#{item.n} を更新して隠しました", Hud.OK);
+                    app.FxHidden();
                     Debug.Log($"[clay] 保存: {path} transform={MiniJson.Write(transform)}");
                 }
                 else
@@ -241,20 +295,23 @@ namespace AKun
                     editingId = objectId;
                     string path = Save(it);
                     app.Log($"#{counter} を投稿して隠しました ({Kb(ex.bytes.Length)}{SizeNote(ex)})");
+                    app.hud.Toast($"#{counter} を隠しました", Hud.OK);
+                    app.FxHidden();
                     Debug.Log($"[clay] 保存: {path} transform={MiniJson.Write(transform)}");
                     // ラウンドの最初の投稿には、そのまま化ける (ケイに見つかるとドロが捕まるのはこのオブジェクト)
                     if (Server != null && disguisedId == null)
                     {
                         await target.Disguise(objectId);
                         disguisedId = objectId;
-                        app.Log($"#{it.n} に化けました");
+                        Notify($"#{it.n} に化けました", Hud.WARN);
+                        app.FxDisguised();
                     }
                 }
                 EndChoosing();
             }
             catch (Exception err)
             {
-                app.Log($"投稿できませんでした: {err.Message}");
+                Notify($"投稿できませんでした: {err.Message}", Hud.ERROR, "error");
             }
             finally
             {
@@ -272,9 +329,10 @@ namespace AKun
             {
                 await target.Disguise(it.id);
                 disguisedId = it.id;
-                app.Log($"#{it.n} に化けました");
+                Notify($"#{it.n} に化けました", Hud.WARN);
+                app.FxDisguised();
             }
-            catch (Exception err) { app.Log($"化けられませんでした: {err.Message}"); }
+            catch (Exception err) { Notify($"化けられませんでした: {err.Message}", Hud.ERROR, "error"); }
             finally { busy = false; }
         }
 
@@ -282,7 +340,7 @@ namespace AKun
         {
             if (busy) return;
             EndChoosing();
-            app.Log("投稿をやめました (粘土はそのまま)");
+            Notify("投稿をやめました (粘土はそのまま)", Hud.INFO);
         }
 
         void EndChoosing()
@@ -328,11 +386,14 @@ namespace AKun
                 app.Log(g.IsHost
                     ? $"部屋を作りました ({ServerTarget.Short(g.sessionId)}…)。ケイが入ったら「準備をはじめる」"
                     : $"部屋に入りました ({ServerTarget.Short(g.sessionId)}…)。ホストが始めるのを待ちます");
+                app.hud.Toast(g.IsHost ? "部屋を作りました" : "部屋に入りました", Hud.INFO);
+                Sfx.Play("chime");
+                lastStatus = g.status; lastCaught = g.IsCaught;
             }
             catch (Exception err)
             {
                 t?.Close();
-                app.Log($"サーバーに接続できません: {err.Message}");
+                Notify($"サーバーに接続できません: {err.Message}", Hud.ERROR, "error");
             }
             finally { busy = false; }
         }
@@ -357,6 +418,31 @@ namespace AKun
 
         public void Close() => target.Close();
 
+        // ログに書き、体験者にも通知で見せる (音つき)
+        void Notify(string msg, Color accent, string sound = null, bool log = true)
+        {
+            if (log) app.Log(msg);
+            app.hud?.Toast(msg, accent);
+            if (sound != null) Sfx.Play(sound);
+        }
+
+        // フェーズが変わった: ジングルと通知
+        void OnPhase(GameState g)
+        {
+            switch (g.status)
+            {
+                case GameState.PREPARING:
+                    Notify(g.IsHider ? $"ラウンド {g.round} 準備開始！ 形を作って隠そう" : $"ラウンド {g.round} 準備開始！", Hud.OK, "jinglePrepare", false);
+                    break;
+                case GameState.PLAYING:
+                    Notify("本番開始！ ケイが探し始めた", Hud.WARN, "jinglePlay", false);
+                    break;
+                case GameState.FINISHED:
+                    Notify("ラウンド終了", Hud.INFO, "jingleFinish", false);
+                    break;
+            }
+        }
+
         public void Update()
         {
             var s = Server;
@@ -370,10 +456,22 @@ namespace AKun
                     if (posted.Count > 0) app.Log($"ラウンド {lastRound}: 前のラウンドの投稿は片付けました (粘土はそのまま)");
                     ClearPosts();
                 }
+                // フェーズが変わった・見つかった・接続が切れた / つながった
+                var g = s.game;
+                if (lastStatus != null && g.status != lastStatus) OnPhase(g);
+                lastStatus = g.status;
+                if (g.IsCaught && !lastCaught) Notify("見つかった！ このラウンドはもう動かせません", Hud.ERROR, "alarm", false);
+                lastCaught = g.IsCaught;
+                if (s.Connected != lastConnected)
+                {
+                    lastConnected = s.Connected;
+                    if (s.Connected) Notify("サーバーにつながりました", Hud.OK, "chime", false);
+                    else Notify("サーバーとの接続が切れました", Hud.ERROR, "error", false);
+                }
                 // 隠す場所を選んでいる間に投稿できなくなった (見つかった、ラウンドが終わった)
                 if (Choosing && !busy && Blocked != null)
                 {
-                    app.Log($"投稿をやめました: {Blocked}");
+                    Notify($"投稿をやめました: {Blocked}", Hud.WARN);
                     EndChoosing();
                 }
             }

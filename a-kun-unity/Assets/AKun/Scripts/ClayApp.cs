@@ -60,11 +60,14 @@ namespace AKun
         const float limitFollow = 25f;      // 見えている手が目標に追いつく速さ (1/s)
         const float limitRelease = 10f;     // 離したとき見えている手が本物の手に戻る速さ (1/s)
 
-        // 手の見た目 (半透明の肌色。なでている間 / こねている間で、ほんの少しだけ色を変える)
+        // 手の見た目 (半透明の肌色。なでている間は水色、こねている間は橙色に寄せて、今どちらかが分かるようにする)
         const float HAND_OPACITY = 0.5f;
         static readonly Color HAND_BASE = Gfx.Hex("#e3c4b3");
-        static readonly Color HAND_STROKE = Gfx.Hex("#e0c9bf");
-        static readonly Color HAND_KNEAD = Gfx.Hex("#e8bba8");
+        static readonly Color HAND_STROKE = Gfx.Hex("#b9dcef");
+        static readonly Color HAND_KNEAD = Gfx.Hex("#f2a66e");
+        // 触れている所の輪の色 (モードのボタンと同じ水色 / こねるの橙色)
+        static readonly Color RING_STROKE = Gfx.Hex("#4fc3f7");
+        static readonly Color RING_KNEAD = Gfx.Hex("#ff9e40");
 
         // 粘土の表面からこの距離 (m) より近くでつまんだときは、粘土ごと動かす・回す操作を始めない
         const float NO_MOVE_NEAR = 0.12f;
@@ -115,10 +118,30 @@ namespace AKun
         // Undo
         readonly List<ClayField.Snapshot> undoStack = new List<ClayField.Snapshot>();
 
-        // ログ (作業台の上の文字板)
+        // ログ (スタッフ用。背中側の「粘土の性質」のパネルの上の文字板)
         readonly List<string> logLines = new List<string>();
         TextMesh[] hudLines;
         TextMesh hudTitle;
+
+        // 体験者への案内・演出
+        public Hud hud;
+        public Fx fx;
+        WristMenu wrist;
+        Tutorial tutorial;
+        bool tutorialShown;
+        Transform brushPreview;   // ブラシの大きさの見本 (実物大の球)
+        float brushChangedAt = -1e9f;
+        float resetArmedAt = -1e9f; // 「リセット」を 1 回押した時刻 (もう一度押すとリセット)
+        const float RESET_CONFIRM = 3f;
+
+        // 手ごとの演出の状態
+        class HandFx
+        {
+            public Vector3 lastTip, touchPt, touchN = Vector3.up, pullStart;
+            public float speed, proximity = -1, rippleT, crumbT, splashT;
+            public bool wasContact, wasPaint;
+        }
+        HandFx[] hfx;
 
         // ================= 起動 =================
         void Awake()
@@ -126,6 +149,8 @@ namespace AKun
             Application.targetFrameRate = 90;
             SetupLights();
             BuildRig();
+            Sfx.Init(cam.transform);
+            fx = new Fx(cam);
             BuildWorkspace();
             BuildClay();
             BuildHands();
@@ -133,7 +158,13 @@ namespace AKun
             BuildHud();
             map = new MapView(clayMat);
             post = new Post(this, workspace, PANEL_Z);
+            tutorial = new Tutorial();
+            BuildWristMenu();
             uiPanels.Add(panel); uiPanels.Add(propPanel); uiPanels.Add(post.Panel); uiPanels.Add(post.HidePanel); uiPanels.Add(post.GamePanel);
+            uiPanels.Add(wrist.panel);
+            ButtonPanel.Pressed = p => Sfx.Play("click", p);
+            ButtonPanel.Hovered = p => Sfx.Play("hover", p, 1, 1, 0.06f);
+            ButtonPanel.Slid = p => Sfx.Play("tick", p, 0.7f, 1, 0.04f);
             LoadParams();
             Log($"起動しました (文字: {Gfx.FontName})");
             RequestPermissions();
@@ -204,6 +235,8 @@ namespace AKun
                 cam.backgroundColor = Gfx.Hex("#1d2026");
                 headDriver.enabled = false;
                 cam.transform.position = new Vector3(0.0f, 1.25f, 0.15f);
+                Log("M キー: 手首メニューを出す / しまう");
+                StartTutorial();
             }
         }
 
@@ -278,6 +311,7 @@ namespace AKun
         {
             hands = new[] { new HandState(Handedness.Left), new HandState(Handedness.Right) };
             looks = new[] { new HandLook("hand-left"), new HandLook("hand-right") };
+            hfx = new[] { new HandFx(), new HandFx() };
             brushCursor = new Transform[2];
             brushMat = new Material[2];
             pointers = new (Transform, Transform, LineRenderer)[2];
@@ -333,11 +367,14 @@ namespace AKun
 
         void BuildPanels()
         {
-            const float bw = 0.056f, bh = 0.04f, gap = 0.006f;
+            // 道具のパネル: 上から、モード (大きく) / ブラシの大きさ / 戻す・手元へ・使い方 / 色見本。
+            // 「リセット」は押し間違えないよう、少し離した下の段に置き、2 回押すとリセットする
+            const float bw = 0.056f, bh = 0.04f, gap = 0.006f, mh = 0.05f;
             float Col(int i) => (i - 1.5f) * (bw + gap);
-            float Row(int j) => -j * (bh + gap);
             const float PANEL_W = 4 * bw + 3 * gap;
             const float swatchW = (PANEL_W - 5 * gap) / 6, shh = 0.03f; // 色見本
+            const float yMode = 0, ySize = -mh / 2 - gap - bh / 2, yTools = ySize - bh - gap;
+            const float ySwatch = yTools - bh / 2 - gap - shh / 2, yReset = ySwatch - (shh + gap) - shh / 2 - 0.02f - bh / 2;
             var defs = new List<ButtonDef>();
             for (int i = 0; i < MODES.Length; i++)
             {
@@ -345,34 +382,47 @@ namespace AKun
                 defs.Add(new ButtonDef
                 {
                     id = m.id, label = () => m.label, color = m.color,
-                    x = (Col(i * 2) + Col(i * 2 + 1)) / 2, y = Row(0), w = 2 * bw + gap, h = bh,
+                    x = (Col(i * 2) + Col(i * 2 + 1)) / 2, y = yMode, w = 2 * bw + gap, h = mh,
                     onPress = () => mode = m.id, isActive = () => mode == m.id,
                 });
             }
-            defs.Add(new ButtonDef { id = "smaller", label = () => "− 小", x = Col(0), y = Row(1), w = bw, h = bh, onPress = () => SetBrush(brushR - 0.005f) });
-            defs.Add(new ButtonDef { id = "size", label = () => $"{Mathf.RoundToInt(brushR * 1000)}mm", x = Col(1), y = Row(1), w = bw, h = bh });
-            defs.Add(new ButtonDef { id = "bigger", label = () => "+ 大", x = Col(2), y = Row(1), w = bw, h = bh, onPress = () => SetBrush(brushR + 0.005f) });
-            defs.Add(new ButtonDef { id = "undo", label = () => "↶ 戻す", x = Col(3), y = Row(1), w = bw, h = bh, onPress = Undo });
-            defs.Add(new ButtonDef { id = "recenter", label = () => "手元へ", x = Col(0), y = Row(2), w = bw, h = bh, onPress = Recenter });
-            defs.Add(new ButtonDef { id = "reset", label = () => "リセット", x = Col(1), y = Row(2), w = bw, h = bh, onPress = ResetClay });
+            defs.Add(new ButtonDef
+            {
+                id = "brush", slider = true, label = () => "ブラシの大きさ (塗る・つまむ)", color = "#f48fb1",
+                x = 0, y = ySize, w = PANEL_W, h = bh, min = 0.01f, max = 0.12f,
+                get = () => brushR, set = v => { SetBrush(v); brushChangedAt = Time.unscaledTime; },
+                format = v => $"{Mathf.RoundToInt(v * 1000)}mm",
+            });
+            defs.Add(new ButtonDef { id = "undo", label = () => "↶ 戻す", x = (Col(0) + Col(1)) / 2, y = yTools, w = 2 * bw + gap, h = bh, onPress = Undo });
+            defs.Add(new ButtonDef { id = "recenter", label = () => "手元へ", x = Col(2), y = yTools, w = bw, h = bh, onPress = Recenter });
+            defs.Add(new ButtonDef { id = "howto", label = () => "使い方", x = Col(3), y = yTools, w = bw, h = bh, onPress = StartTutorial, isActive = () => tutorial != null && tutorial.Active });
             for (int i = 0; i < PALETTE.Length; i++)
             {
                 string c = PALETTE[i];
                 defs.Add(new ButtonDef
                 {
                     id = $"color{i}", swatch = true, color = c,
-                    x = -PANEL_W / 2 + swatchW / 2 + (i % 6) * (swatchW + gap), y = Row(3) + bh / 2 - shh / 2 - (i / 6) * (shh + gap),
+                    x = -PANEL_W / 2 + swatchW / 2 + (i % 6) * (swatchW + gap), y = ySwatch - (i / 6) * (shh + gap),
                     w = swatchW, h = shh, onPress = () => SetColor(c), isActive = () => color == c,
                 });
             }
-            panel = new ButtonPanel(workspace, "tool-panel", defs, new[]
+            defs.Add(new ButtonDef
             {
-                "さわる: 手のひらで軽く触れる=なでる / 深く押す=こねる",
-                "塗る: 人差し指の先で (下の色を使う)",
-                "つまむ: 引っ張る / 空中: 移動・両手で回転",
+                id = "reset", color = "#e57373", x = (Col(2) + Col(3)) / 2, y = yReset, w = 2 * bw + gap, h = bh,
+                label = () => ResetArmed ? "もう一度押すとリセット" : "リセット (球に戻す)",
+                onPress = PressReset, isActive = () => ResetArmed,
             });
+            panel = new ButtonPanel(workspace, "tool-panel", defs, new[] { "さわる=手のひら・塗る=指先・つまむ=伸ばす" });
             panel.group.localPosition = new Vector3(-0.3f, 0.02f, -PANEL_Z);
             panel.group.localRotation = Quaternion.Euler(0.3f * Mathf.Rad2Deg, -0.6f * Mathf.Rad2Deg, 0);
+
+            // ブラシの大きさの見本 (実物大の球)。大きさを変えている間だけ、パネルの上に出す
+            var pv = new GameObject("brush-preview");
+            pv.transform.SetParent(panel.group, false);
+            pv.AddComponent<MeshFilter>().sharedMesh = Gfx.Sphere(24, 16);
+            pv.AddComponent<MeshRenderer>().sharedMaterial = Gfx.Unlit(new Color(0.96f, 0.56f, 0.69f, 0.3f), 3010);
+            pv.SetActive(false);
+            brushPreview = pv.transform;
 
             // 粘土の性質 (スライダー)
             string Pct(float v) => $"{Mathf.RoundToInt(v * 100)}%";
@@ -385,6 +435,8 @@ namespace AKun
                 new Param { id = "slide", label = "引きずり", min = 0.05f, max = 0.9f, get = () => viscSlide, set = v => viscSlide = v, format = Pct },
                 new Param { id = "relax", label = "なめらかさ", min = 0, max = 0.5f, get = () => field.relax, set = v => field.relax = v, format = v => $"{Mathf.RoundToInt(v * 200)}%" },
                 new Param { id = "kneadDepth", label = "こねる開始", min = 0.004f, max = 0.04f, get = () => kneadFrom, set = v => kneadFrom = v, format = v => $"{Mathf.RoundToInt(v * 1000)}mm" },
+                new Param { id = "sfx", label = "効果音の音量", min = 0, max = 1, get = () => Sfx.sfxVolume, set = v => Sfx.sfxVolume = v, format = Pct },
+                new Param { id = "bgm", label = "BGM の音量", min = 0, max = 1, get = () => Sfx.bgmVolume, set = v => Sfx.bgmVolume = v, format = Pct },
             };
             paramDefaults = new Dictionary<string, float>();
             foreach (var p in PARAMS) paramDefaults[p.id] = p.get();
@@ -409,6 +461,71 @@ namespace AKun
         }
 
         void SetBrush(float r) => brushR = Mathf.Clamp(r, 0.01f, 0.12f);
+
+        bool ResetArmed => Time.unscaledTime - resetArmedAt < RESET_CONFIRM;
+
+        // 「リセット」: 1 回目は確かめるだけ。3 秒以内にもう一度押すとリセットする
+        void PressReset()
+        {
+            if (!ResetArmed)
+            {
+                resetArmedAt = Time.unscaledTime;
+                hud?.Toast("もう一度押すと、粘土を球に戻します", Hud.WARN, 2.5f);
+                return;
+            }
+            resetArmedAt = -1e9f;
+            ResetClay();
+        }
+
+        // 手首メニュー: よく使うもの (モード・色・戻す) と残り時間
+        void BuildWristMenu()
+        {
+            const float sw = 0.024f, gap = 0.005f, bh = 0.03f;
+            const float W = 6 * sw + 5 * gap;
+            var defs = new List<ButtonDef>
+            {
+                new ButtonDef { id = "wTime", label = WristStatus, x = 0, y = 0, w = W, h = 0.022f },
+            };
+            for (int i = 0; i < MODES.Length; i++)
+            {
+                var m = MODES[i];
+                defs.Add(new ButtonDef
+                {
+                    id = "w" + m.id, label = () => m.id == "touch" ? "さわる" : "塗る", color = m.color,
+                    x = (i - 0.5f) * (W / 2 + gap / 2), y = -0.022f / 2 - gap - bh / 2, w = (W - gap) / 2, h = bh,
+                    onPress = () => mode = m.id, isActive = () => mode == m.id,
+                });
+            }
+            float ys = -0.011f - gap - bh - gap - sw / 2;
+            for (int i = 0; i < PALETTE.Length; i++)
+            {
+                string c = PALETTE[i];
+                defs.Add(new ButtonDef
+                {
+                    id = $"wcolor{i}", swatch = true, color = c,
+                    x = -W / 2 + sw / 2 + (i % 6) * (sw + gap), y = ys - (i / 6) * (sw + gap), w = sw, h = sw,
+                    onPress = () => SetColor(c), isActive = () => color == c,
+                });
+            }
+            defs.Add(new ButtonDef { id = "wundo", label = () => "↶ 戻す", x = 0, y = ys - sw - gap - sw / 2 - gap - bh / 2, w = W, h = bh, onPress = Undo });
+            wrist = new WristMenu(defs);
+        }
+
+        string WristStatus()
+        {
+            var rem = post?.Server?.game.Remaining(DateTime.UtcNow);
+            string m = mode == "touch" ? "さわる" : "塗る";
+            if (rem == null) return $"いま: {m}";
+            int s = Mathf.CeilToInt((float)rem.Value);
+            return $"いま: {m} · 残り {s / 60}:{s % 60:00}";
+        }
+
+        void StartTutorial()
+        {
+            tutorialShown = true;
+            if (hiding) return;
+            tutorial.Begin();
+        }
 
         void SetColor(string c)
         {
@@ -448,13 +565,16 @@ namespace AKun
             SaveParams();
         }
 
-        // ================= ログの板 =================
+        // ================= 案内の帯とログの板 =================
         void BuildHud()
         {
+            // 体験者には「今やること」の帯を、作業台の上 (前はログの板があった所) に出す
+            hud = new Hud(workspace, new Vector3(0, 0.31f, -PANEL_Z), cam);
+            // ログはスタッフ用: 背中側の「粘土の性質」のパネルの上に置く
             var board = new GameObject("log-board").transform;
-            board.SetParent(workspace, false);
-            board.localPosition = new Vector3(0, 0.31f, -PANEL_Z);
+            board.SetParent(propPanel.group, false);
             const float W = 0.34f, H = 0.106f;
+            board.localPosition = new Vector3(0, propPanel.maxY + 0.01f + H / 2, 0);
             var bg = ButtonPanel.Rect(board, 0, 0, 0.002f, W, H, 2978);
             ButtonPanel.SetRect(bg, new Color(15 / 255f, 17 / 255f, 21 / 255f), new Color(15 / 255f, 17 / 255f, 21 / 255f), W, H, 0.008f, 0, 0.85f);
             float lh = 0.0105f, x0 = -W / 2 + 0.008f, y0 = H / 2 - 0.006f;
@@ -599,11 +719,23 @@ namespace AKun
 
         void Undo()
         {
-            if (undoStack.Count == 0) return;
+            if (undoStack.Count == 0)
+            {
+                Sfx.Play("error", clay.position, 0.6f);
+                hud?.Toast("これ以上は戻せません", Hud.WARN, 2f);
+                return;
+            }
             var s = undoStack[undoStack.Count - 1];
             undoStack.RemoveAt(undoStack.Count - 1);
             field.Restore(s);
+            // 戻したことが分かるよう、粘土のまわりに輪を一瞬広げる
+            float r = ClayRadius;
+            Sfx.Play("undo", clay.position);
+            fx.Ripple(clay.position, Vector3.up, new Color(1, 1, 1, 0.7f), r * 1.02f, r * 1.35f, 0.45f);
+            fx.Sparkle(clay.position, r * 0.9f, 14, new Color(1, 1, 1, 0.9f), 0.6f);
         }
+
+        float ClayRadius => START_R * clay.localScale.x;
 
         public void RestoreSnapshot(ClayField.Snapshot snap)
         {
@@ -616,9 +748,19 @@ namespace AKun
         {
             PushUndo();
             field.ResetSphere(START_R);
+            StopTransition();
             clay.SetPositionAndRotation(workspace.position, workspace.rotation);
             clay.localScale = Vector3.one * CUBE_SCALE;
             manipDirty = true;
+            // ぼよんと弾んで球に戻る。台座のまわりに砂ぼこり
+            Sfx.Play("boing", clay.position);
+            fx.Burst(workspace.position + Vector3.down * CUBE_HALF, 28, Gfx.Hex("#d9cbbd"), 0.35f, 0.006f, 0.7f, 0.4f, Vector3.up, 0.85f);
+            clayRest = (clay.position, clay.rotation, Vector3.one * CUBE_SCALE);
+            clayTween = fx.Tween(0.75f, u =>
+            {
+                float a = 0.22f * Fx.Wobble(u);
+                clay.localScale = new Vector3(CUBE_SCALE * (1 + a * 0.5f), CUBE_SCALE * (1 - a), CUBE_SCALE * (1 + a * 0.5f));
+            }, () => { clay.localScale = Vector3.one * CUBE_SCALE; clayRest = null; });
         }
 
         // 頭の前に作業台と粘土を持ってくる
@@ -626,6 +768,7 @@ namespace AKun
 
         void RecenterFrom(Vector3 head, Quaternion headRot)
         {
+            StopTransition();
             var fwd = headRot * Vector3.forward;
             fwd.y = 0;
             if (fwd.sqrMagnitude < 1e-4f) fwd = Vector3.forward;
@@ -660,11 +803,12 @@ namespace AKun
 
         void SetHiding(bool on)
         {
+            bool was = hiding;
+            StopTransition();
             hiding = on;
-            map.Visible = on;
-            clay.gameObject.SetActive(!on);
             panel.Visible = !on;
             propPanel.Visible = !on;
+            if (on) tutorial.Stop();
             foreach (var hs in hands)
             {
                 EndPinch(hs);
@@ -672,6 +816,95 @@ namespace AKun
                 hs.ResetTouch();
             }
             manipDirty = true;
+            if (on == was)
+            {
+                map.Visible = on;
+                clay.gameObject.SetActive(!on);
+                return;
+            }
+            if (on)
+            {
+                // 粘土が縮みながらマップ (前に隠した場所があればそこ) へ吸い込まれ、マップの模型が台の上に膨らんで出てくる
+                clayRest = (clay.position, clay.rotation, clay.localScale);
+                var target = map.HasSpot ? map.root.TransformPoint(map.SpotPosition) : map.root.TransformPoint(map.LocalBounds.center);
+                map.Visible = true;
+                Sfx.Play("whoosh", clay.position);
+                var from = clay.position; var s0 = clay.localScale;
+                clayTween = fx.Tween(0.45f, u =>
+                {
+                    float e = Fx.InBack(u);
+                    clay.position = Vector3.LerpUnclamped(from, target, e);
+                    clay.localScale = s0 * Mathf.Max(0.001f, 1 - Mathf.Clamp01(e));
+                }, () => { clay.gameObject.SetActive(false); RestoreClay(); });
+                GrowMap(true);
+            }
+            else
+            {
+                // マップがしぼんで消え、粘土が台の上にぽんと戻ってくる
+                clay.gameObject.SetActive(true);
+                RestoreClay();
+                Sfx.Play("whooshUp", clay.position);
+                var s1 = clay.localScale;
+                clayRest = (clay.position, clay.rotation, s1);
+                clayTween = fx.Tween(0.5f, u => clay.localScale = s1 * Mathf.Max(0.001f, Fx.OutBack(u)), () => { clay.localScale = s1; clayRest = null; });
+                GrowMap(false);
+            }
+        }
+
+        // ---------- しまう・出すの動き ----------
+        Fx.Handle clayTween, mapTween;
+        (Vector3 pos, Quaternion rot, Vector3 scale)? clayRest;
+        (Vector3 pos, float scale)? mapRest;
+
+        void RestoreClay()
+        {
+            if (clayRest == null) return;
+            var r = clayRest.Value;
+            clay.SetPositionAndRotation(r.pos, r.rot);
+            clay.localScale = r.scale;
+            clayRest = null;
+        }
+
+        void RestoreMap()
+        {
+            if (mapRest == null) return;
+            map.root.position = mapRest.Value.pos;
+            map.root.localScale = Vector3.one * mapRest.Value.scale;
+            mapRest = null;
+        }
+
+        // 動きの途中で次の操作が来たら、途中の動きをやめて、元の置き方に戻す
+        void StopTransition()
+        {
+            bool clayAnim = clayTween != null && !clayTween.finished, mapAnim = mapTween != null && !mapTween.finished;
+            clayTween?.Cancel(); mapTween?.Cancel();
+            clayTween = mapTween = null;
+            if (clayAnim)
+            {
+                RestoreClay();
+                clay.gameObject.SetActive(!hiding);
+            }
+            if (mapAnim) { RestoreMap(); map.Visible = hiding; }
+            if (!hiding && !clayAnim && clay.localScale.x < 0.01f) clay.localScale = Vector3.one * CUBE_SCALE;
+        }
+
+        // マップの模型を、台の上の点 (底面の中心) を中心に膨らませる / しぼませる
+        void GrowMap(bool grow)
+        {
+            float s1 = map.root.localScale.x;
+            var p1 = map.root.position;
+            mapRest = (p1, s1);
+            var pivot = grow ? workspace.position + Vector3.down * CUBE_HALF : map.root.TransformPoint(map.LocalBounds.center);
+            void At(float k)
+            {
+                k = Mathf.Max(0.001f, k);
+                map.root.localScale = Vector3.one * s1 * k;
+                map.root.position = pivot + (p1 - pivot) * k;
+            }
+            if (grow)
+                mapTween = fx.Tween(0.55f, u => At(Fx.OutBack(Mathf.Clamp01((u - 0.2f) / 0.8f))), () => { RestoreMap(); });
+            else
+                mapTween = fx.Tween(0.3f, u => At(1 - Fx.OutCubic(u)), () => { RestoreMap(); map.Visible = false; });
         }
 
         // マップを作業台の上に模型として置く (粘土の台座の上)
@@ -680,6 +913,7 @@ namespace AKun
         // 「マップを手元へ」: 作業台ごと頭の前に持ってきて、マップを最初の大きさで置き直す
         public void RecenterMap()
         {
+            StopTransition();
             if (xrActive) Recenter();
             PlaceMapOnTable();
         }
@@ -695,9 +929,16 @@ namespace AKun
                 hs.pinching = true;
                 manipDirty = true;
                 hs.pinchMode = onMap ? "spot" : "move";
+                if (onMap)
+                {
+                    // 隠す場所を指した: 小さな輪と、ぽんという音
+                    Sfx.Play("pop", hit.point, 0.5f, 1.4f);
+                    fx.Ripple(hit.point + hit.normal * 0.002f, hit.normal, new Color(1, 0.84f, 0.31f, 0.9f), 0.01f, 0.05f, 0.4f);
+                }
             }
             else if (hs.pinching && pinchDist > PINCH_OFF)
             {
+                if (hs.pinchMode == "spot" && map.HasSpot) Sfx.Play("tick", hs.pinchPos, 0.6f);
                 EndPinch(hs);
             }
             if (hs.pinching && hs.pinchMode == "move") { movers.Add(hs); return; }
@@ -712,6 +953,32 @@ namespace AKun
             brushCursor[hi].position = hit.point;
             brushCursor[hi].localScale = Vector3.one * 0.01f;
             brushCursor[hi].gameObject.SetActive(true);
+        }
+
+        // ================= 投稿・化けるの演出 (Post から呼ぶ) =================
+        // 隠し終えた: 隠した所に砂ぼこりと輪を出して、どすんと置く
+        public void FxHidden()
+        {
+            if (!map.HasSpot) return;
+            var p = map.root.TransformPoint(map.SpotPosition);
+            var up = map.root.rotation * (map.SpotRotation * Vector3.up);
+            Sfx.Play("land", p);
+            Sfx.Play("pop", p, 0.8f, 1, 0);
+            fx.Burst(p, 30, Gfx.Hex("#e8dccb"), 0.25f, 0.005f, 0.7f, 0.3f, up, 0.7f);
+            fx.Ripple(p + up * 0.002f, up, new Color(0.51f, 0.78f, 0.52f, 0.9f), 0.01f, 0.09f, 0.6f);
+            fx.Sparkle(p + up * 0.03f, 0.04f, 12, Gfx.Hex("#fff59d"));
+        }
+
+        // 化けた: きらきらしながら入れ替わる (粘土が出ていれば粘土のまわり、マップを出していれば隠した所)
+        public void FxDisguised()
+        {
+            Vector3 p; float r;
+            if (hiding && map.HasSpot) { p = map.root.TransformPoint(map.SpotPosition); r = 0.05f; }
+            else { p = clay.position; r = ClayRadius; }
+            Sfx.Play("shimmer", p);
+            fx.Sparkle(p, r * 1.1f, 60, Gfx.Hex("#ffe082"), 1.4f);
+            fx.Sparkle(p, r * 0.9f, 30, Gfx.Hex("#ffffff"), 1.0f);
+            fx.Ripple(p, Vector3.up, new Color(1, 0.88f, 0.51f, 0.8f), r * 0.6f, r * 1.6f, 0.8f);
         }
 
         // ================= 投稿用の書き出し =================
@@ -783,12 +1050,21 @@ namespace AKun
                 {
                     UpdateDesktop();
                 }
+                var kb = Keyboard.current;
+                if (!xrActive && kb != null && kb.mKey.wasPressedThisFrame) wrist.Toggle(cam.transform);
                 panel.Refresh();
                 propPanel.Refresh();
+                if (wrist.panel.Visible) wrist.panel.Refresh();
                 Gfx.SyncFontTexture();
                 post.Update();
                 RemeshDirty();
                 if (saveAt > 0 && Time.unscaledTime > saveAt) { saveAt = -1; SaveParams(); }
+                UpdateGuide();
+                UpdateBrushPreview();
+                if (tutorial.Active) tutorial.Update(clay.position, ClayRadius, cam.transform);
+                fx.Update(dt);
+                hud.Update(dt);
+                Sfx.Update(dt);
             }
             catch (Exception e)
             {
@@ -797,6 +1073,36 @@ namespace AKun
             }
         }
         string lastErr = "";
+
+        // 「今やること」の帯・残り時間の輪・秒読み・BGM の雰囲気
+        int lastCount = -1;
+        void UpdateGuide()
+        {
+            var g = post.Guide(mode, hiding, map.HasSpot);
+            if (tutorial.Active && tutorial.Caption != null) hud.SetGuide(tutorial.Caption, "白いお手本の手をまねしてみよう", g.steps, g.step);
+            else hud.SetGuide(g.main, g.sub, g.steps, g.step);
+            var s = post.Server;
+            bool inRound = s != null && s.game.InRound;
+            double? rem = inRound ? s.game.Remaining(DateTime.UtcNow) : null;
+            hud.SetTimer(s == null ? null : $"{s.game.round}|{s.game.status}|{s.game.phaseEndsAt}", rem, s == null ? "" : GameState.PhaseName(s.game.status));
+            if (rem != null && rem.Value <= 10 && rem.Value > 0)
+            {
+                int sec = Mathf.CeilToInt((float)rem.Value);
+                if (sec != lastCount) { lastCount = sec; Sfx.Play(sec <= 3 ? "count3" : "count", null, 0.8f); }
+            }
+            else lastCount = -1;
+            Sfx.Mood(s != null && s.game.status == GameState.PLAYING ? "tense" : "calm");
+        }
+
+        // ブラシの大きさを変えている間 (と、スライダーを指している間) だけ、実物大の球を出す
+        void UpdateBrushPreview()
+        {
+            bool show = !hiding && (Time.unscaledTime - brushChangedAt < 1.5f || panel.hover.Contains("brush"));
+            if (brushPreview.gameObject.activeSelf != show) brushPreview.gameObject.SetActive(show);
+            if (!show) return;
+            brushPreview.localScale = Vector3.one * brushR;
+            brushPreview.localPosition = new Vector3(0, panel.maxY + brushR + 0.01f, 0);
+        }
 
         // 頭の姿勢が取れたら、目の前に粘土とパネルを置く
         void TryRecenter(float t)
@@ -817,6 +1123,7 @@ namespace AKun
             recenterPending = false;
             var w = clay.position;
             Log($"配置: 頭 y={cam.transform.position.y:0.00}m → 粘土 ({w.x:0.00}, {w.y:0.00}, {w.z:0.00})");
+            if (!tutorialShown) StartTutorial(); // 粘土が目の前に来たら、お手本の手で使い方を見せる
         }
 
         // XR が無いとき (エディタ): マウスでパネルを押せるだけ
@@ -890,8 +1197,8 @@ namespace AKun
         // 本物の手の深さ = 見えている手のめり込み + これまでのずらし量 として扱う (god-object 方式)
         void UpdateTouchLimit(HandState hs, float dt, bool active)
         {
-            float best = float.NegativeInfinity;
-            Vector3 ln = Vector3.up;
+            float best = float.NegativeInfinity, bestSdf = 0;
+            Vector3 ln = Vector3.up, bestP = Vector3.zero;
             if (active)
             {
                 foreach (var b in HandBones.BONES)
@@ -901,20 +1208,29 @@ namespace AKun
                     Vector3 pa = hs.jreal[b.a], pb = hs.jreal[b.b];
                     for (int k = 0; k <= 2; k++)
                     {
-                        var g = WorldToGrid(Vector3.Lerp(pa, pb, k * 0.5f) + hs.offset);
-                        float depth = r - field.Sample(g); // 格子単位。正ならめり込み、負なら表面までのすき間
+                        var wp = Vector3.Lerp(pa, pb, k * 0.5f) + hs.offset;
+                        var g = WorldToGrid(wp);
+                        float sdf = field.Sample(g);
+                        float depth = r - sdf; // 格子単位。正ならめり込み、負なら表面までのすき間
                         if (depth > best)
                         {
-                            best = depth;
+                            best = depth; bestSdf = sdf; bestP = wp;
                             if (depth > -2) ln = field.Gradient(g);
                         }
                     }
                 }
             }
+            var hf = hfx[hs == hands[0] ? 0 : 1];
+            hf.proximity = -1;
             float sTarget = 0, depthNow = 0;
             if (!float.IsNegativeInfinity(best))
             {
                 float proxyDepth = best * field.h * clay.localScale.x; // m
+                // 触れている所 (表面の上の点) を、演出のために覚えておく
+                var nw = clay.rotation * ln;
+                hf.proximity = proxyDepth;
+                hf.touchN = nw;
+                hf.touchPt = bestP - nw * (bestSdf * field.h * clay.localScale.x);
                 if (proxyDepth > -0.005f)
                 {
                     // 押す向き (粘土の外向き) をなめらかに追う
@@ -1054,6 +1370,11 @@ namespace AKun
                 var inside = g - n * (s + R * 0.25f);
                 hs.grabOffset = GridToWorld(inside) - hs.pinchPos;
                 hs.lastG = inside;
+                // つまんだ所に小さな輪と音 (伸ばす音の高さは、ここからの距離で決める)
+                hfx[hs == hands[0] ? 0 : 1].pullStart = hs.pinchPos;
+                var nw = clay.rotation * n;
+                Sfx.Play("pop", hs.pinchPos, 0.45f, 0.8f);
+                fx.Ripple(GridToWorld(g - n * s) + nw * 0.002f, nw, new Color(1, 0.84f, 0.31f, 0.85f), 0.008f, 0.04f, 0.35f);
             }
             else if (s < WorldLenToGrid(NO_MOVE_NEAR))
             {
@@ -1204,6 +1525,7 @@ namespace AKun
                     if (!nearClay)
                         foreach (var pn in uiPanels)
                         {
+                            if (hi == 0 && pn == wrist.panel) continue; // 手首メニューは右手で操作する
                             var h = pn.RayHit(rayO, rayD);
                             if (h != null && (hit == null || h.t < hit.t)) hit = h;
                         }
@@ -1219,7 +1541,12 @@ namespace AKun
                 if (!hs.pinching)
                 {
                     ButtonPanel.Btn fb = null; ButtonPanel fp = null; float lx = 0;
-                    foreach (var pn in uiPanels) { fb = pn.FingerHit(hs.tip, out lx); if (fb != null) { fp = pn; break; } }
+                    foreach (var pn in uiPanels)
+                    {
+                        if (hi == 0 && pn == wrist.panel) continue;
+                        fb = pn.FingerHit(hs.tip, out lx);
+                        if (fb != null) { fp = pn; break; }
+                    }
                     if (fb != null)
                     {
                         fp.FingerPress(fb, lx, ref hs.pressed);
@@ -1310,8 +1637,99 @@ namespace AKun
                 }
                 RememberJoints(hs);
             }
-            for (int hi = 0; hi < 2; hi++) DrawHand(hi);
+            for (int hi = 0; hi < 2; hi++) { DrawHand(hi); HandFeedback(hi, dt, t); }
             UpdateObjectManip(movers);
+            // 手首メニュー: 左手のひらを上に向けたら開く (粘土のそばや、つまんでいる間は開かない)
+            var left = hands[0];
+            bool farFromClay = !left.valid.Contains(XRHandJointID.Wrist)
+                || field.Sample(WorldToGrid(left.jreal[XRHandJointID.Wrist])) > WorldLenToGrid(0.1f);
+            wrist.Update(left, cam.transform, !hiding && !left.pinching && !left.uiPinch && farFromClay, dt);
+        }
+
+        // 手ごとの音と演出: 触れている所の輪、触れたときの波紋、こねたときの粘土くず、塗ったときのしぶき、手の音
+        void HandFeedback(int hi, float dt, float t)
+        {
+            var hs = hands[hi]; var hf = hfx[hi];
+            if (!hs.connected || hs.valid.Count == 0)
+            {
+                fx.Contact(hi, Vector3.zero, Vector3.up, 0, Color.white, 0);
+                Sfx.Hand(hi, hf.lastTip, 0, 0, 0, 1, 0, dt);
+                hf.wasContact = hf.wasPaint = false;
+                return;
+            }
+            float sp = (hs.tip - hf.lastTip).magnitude / dt;
+            if (sp > 5) sp = 0; // 手を見失って戻ったとき
+            hf.speed += (sp - hf.speed) * (1 - Mathf.Exp(-10 * dt));
+            hf.lastTip = hs.tip;
+            float k = hs.kneadK;
+            var col = Color.Lerp(RING_STROKE, RING_KNEAD, k);
+            var n = hf.touchN;
+
+            // 触れている所の輪: 近づくと薄く、触れるとはっきり。こねるほど橙色で大きく
+            bool near = !hiding && mode == "touch" && !hs.pinching && hf.proximity > -0.012f;
+            if (near)
+            {
+                float a = hs.contact ? 0.85f : 0.4f * Mathf.InverseLerp(-0.012f, 0.002f, hf.proximity);
+                float radius = 0.022f + 0.018f * k + Mathf.Clamp(hs.depth, 0, 0.03f) * 0.5f;
+                fx.Contact(hi, hf.touchPt + n * 0.003f, n, radius, col, a);
+            }
+            else fx.Contact(hi, Vector3.zero, Vector3.up, 0, col, 0);
+
+            bool touchingClay = !hiding && mode == "touch" && hs.contact && !hs.pinching;
+            if (touchingClay && !hf.wasContact)
+            {
+                var c = col; c.a = 0.8f;
+                fx.Ripple(hf.touchPt + n * 0.002f, n, c, 0.01f, 0.06f, 0.5f);
+                Sfx.Play("pop", hf.touchPt, 0.22f, 0.55f, 0.08f);
+            }
+            else if (touchingClay && hf.speed > 0.12f && t - hf.rippleT > 0.22f)
+            {
+                hf.rippleT = t;
+                var c = col; c.a = 0.45f;
+                fx.Ripple(hf.touchPt + n * 0.002f, n, c, 0.015f, 0.05f, 0.45f);
+            }
+            hf.wasContact = touchingClay;
+            // こねている: 粘土くずが少し飛ぶ
+            if (touchingClay && k > 0.6f && hf.speed > 0.1f && t - hf.crumbT > 0.07f)
+            {
+                hf.crumbT = t;
+                fx.Burst(hf.touchPt + n * 0.005f, 2, ClayColorAt(hf.touchPt), 0.25f, 0.004f, 0.6f, 1.2f, n, 0.6f);
+            }
+            // 塗っている: その色のしぶき
+            bool painting = !hiding && mode == "paint" && hs.touching;
+            if (painting && hf.speed > 0.08f && t - hf.splashT > 0.05f)
+            {
+                hf.splashT = t;
+                fx.Burst(hs.tip, 2, Gfx.Hex(color), 0.2f, 0.0035f, 0.5f, 0.8f, null, 1, 0.03f);
+            }
+            hf.wasPaint = painting;
+
+            // 手の音
+            float rub = 0, squish = 0, stretch = 0, pitch = 1, brush = 0;
+            if (touchingClay)
+            {
+                rub = (1 - k) * Mathf.Clamp01(hf.speed / 0.25f);
+                squish = k * Mathf.Clamp01(0.25f + hf.speed / 0.2f + hs.excess * 40f);
+            }
+            if (!hiding && hs.pinching && hs.pinchMode == "pull")
+            {
+                float dist = Vector3.Distance(hs.pinchPos, hf.pullStart);
+                stretch = Mathf.Clamp01(0.15f + hf.speed / 0.15f);
+                pitch = 0.8f + dist * 6f; // 伸ばすほど高く
+            }
+            if (painting) brush = Mathf.Clamp01(0.2f + hf.speed / 0.2f);
+            Sfx.Hand(hi, hs.tip, rub, squish, stretch, pitch, brush, dt);
+        }
+
+        // 粘土の表面の色 (ワールドの点のいちばん近い格子点)
+        Color ClayColorAt(Vector3 world)
+        {
+            var g = WorldToGrid(world);
+            int N = field.N;
+            int x = Mathf.Clamp(Mathf.RoundToInt(g.x), 0, N - 1), y = Mathf.Clamp(Mathf.RoundToInt(g.y), 0, N - 1), z = Mathf.Clamp(Mathf.RoundToInt(g.z), 0, N - 1);
+            int i = (x + N * (y + N * z)) * 3;
+            var c = field.col;
+            return c == null || i + 2 >= c.Length ? Gfx.Hex("#c98060") : new Color(c[i] / 255f, c[i + 1] / 255f, c[i + 2] / 255f);
         }
 
         // 手の見た目: 見えている手 (表面で止まる位置) をカプセルで描く
@@ -1326,7 +1744,7 @@ namespace AKun
                     if (!hs.valid.Contains(b.a) || !hs.valid.Contains(b.b)) continue;
                     L.AddBone(hs.jpos[b.a], hs.jpos[b.b], BoneRadius(hs, b));
                 }
-            // さわり方で、手の色をほんの少し変える: なでる = 涼しい肌色 / こねる = 赤みのある肌色 (ふだんは元の肌色)
+            // さわり方で、手の色を変える: なでる = 水色に寄せる / こねる = 橙色に寄せる (ふだんは元の肌色)
             bool touching = mode == "touch" && (hs.contact || hs.offset.sqrMagnitude > 1e-8f);
             L.w += ((touching ? 1 : 0) - L.w) * 0.2f;
             L.k += (hs.kneadK - L.k) * 0.25f;
