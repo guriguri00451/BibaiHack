@@ -124,7 +124,7 @@ namespace AKun
             v.rub.pitch = 0.9f + v.vr * 0.25f;
             v.squish.volume = v.vs * 0.8f * sfxVolume;
             v.squish.pitch = 0.85f + v.vs * 0.3f;
-            v.stretch.volume = v.vt * 0.45f * sfxVolume;
+            v.stretch.volume = v.vt * 0.35f * sfxVolume;
             v.stretch.pitch = Mathf.Lerp(v.stretch.pitch, Mathf.Clamp(stretchPitch, 0.5f, 2.5f), k);
             v.brush.volume = v.vb * 0.4f * sfxVolume;
         }
@@ -244,6 +244,33 @@ namespace AKun
                     b[i] = Mathf.Sin(ph) * Mathf.Exp(-t * 22) * Mathf.Min(1, t * 600);
                 }
                 Add("pop", b);
+            }
+            {
+                // つまむ: 粘土をつかむ「むにっ」(低く下がる丸い音と、こもったノイズを短く)
+                var b = Buf(0.16f);
+                float ph = 0; var lp = new LP();
+                for (int i = 0; i < b.Length; i++)
+                {
+                    float t = (float)i / SR;
+                    float f = 170 + 130 * Mathf.Exp(-t * 35);
+                    ph += TAU * f / SR;
+                    float env = Mathf.Exp(-t * 28) * Mathf.Min(1, t * 400);
+                    b[i] = (Mathf.Sin(ph) * 0.8f + lp.Run(Noise(r), Coef(900)) * 1.2f) * env;
+                }
+                Add("pinch", b);
+            }
+            {
+                // 離す: 伸びた粘土が戻る「ぷにっ」(短く上がる音)
+                var b = Buf(0.12f);
+                float ph = 0;
+                for (int i = 0; i < b.Length; i++)
+                {
+                    float t = (float)i / SR;
+                    float f = 180 + 220 * (1 - Mathf.Exp(-t * 40));
+                    ph += TAU * f / SR;
+                    b[i] = Mathf.Sin(ph) * Mathf.Exp(-t * 35) * Mathf.Min(1, t * 500) * 0.7f;
+                }
+                Add("release", b);
             }
             {
                 // どすん: 低い音と、砂ぼこり
@@ -394,36 +421,26 @@ namespace AKun
                 Add("rubLoop", Seamless(b, L));
             }
             {
-                // こねる: 湿った「むにゅ」(低いノイズに、ぷちぷちした泡の音を混ぜる)
+                // こねる: 湿った「むにゅ」(低いノイズをゆっくり揺らすだけ。泡のような音は混ぜない)
                 var b = new float[L + F]; var lp1 = new LP(); var lp2 = new LP();
                 for (int i = 0; i < b.Length; i++)
                 {
                     float t = (float)i / SR;
-                    b[i] = lp2.Run(lp1.Run(Noise(r), Coef(420)), Coef(420)) * 3.0f * (0.7f + 0.3f * Mathf.Sin(TAU * 2.1f * t));
-                }
-                for (int k = 0; k < 26; k++)
-                {
-                    int at = r.Next(0, b.Length - SR / 10);
-                    float f0 = 140 + (float)r.NextDouble() * 220, amp = 0.25f + (float)r.NextDouble() * 0.35f;
-                    float ph = 0;
-                    for (int i = 0; i < SR / 12; i++)
-                    {
-                        float t = (float)i / SR;
-                        ph += TAU * f0 * (1 + 2.5f * t * 10) / SR;
-                        b[at + i] += Mathf.Sin(ph) * Mathf.Exp(-t * 55) * amp * Mathf.Min(1, t * 800);
-                    }
+                    b[i] = lp2.Run(lp1.Run(Noise(r), Coef(380)), Coef(380)) * 3.6f * (0.75f + 0.25f * Mathf.Sin(TAU * 1.5f * t));
                 }
                 Add("squishLoop", Seamless(b, L));
             }
             {
-                // 伸ばす: ゴムがきしむ音 (のこぎり波を低めにして、少し揺らす)
+                // 伸ばす: やわらかい「みょーん」(丸い音を少し揺らし、こすれるノイズをうっすら混ぜる)。
+                // 高さは伸ばした距離で AudioSource.pitch を上げて変える
                 var b = new float[L + F]; var lp = new LP(); float ph = 0;
                 for (int i = 0; i < b.Length; i++)
                 {
                     float t = (float)i / SR;
-                    float f = 150 * (1 + 0.02f * Mathf.Sin(TAU * 7 * t) + 0.01f * Noise(r));
-                    ph += f / SR; ph -= Mathf.Floor(ph);
-                    b[i] = lp.Run(ph * 2 - 1, Coef(900)) * 0.8f;
+                    float f = 200 * (1 + 0.015f * Mathf.Sin(TAU * 5 * t));
+                    ph += TAU * f / SR;
+                    float tone = Mathf.Sin(ph) + 0.2f * Mathf.Sin(ph * 2) + 0.06f * Mathf.Sin(ph * 3);
+                    b[i] = tone * 0.45f + lp.Run(Noise(r), Coef(700)) * 0.25f;
                 }
                 Add("stretchLoop", Seamless(b, L));
             }

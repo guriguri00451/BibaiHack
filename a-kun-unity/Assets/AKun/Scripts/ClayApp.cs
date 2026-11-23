@@ -70,7 +70,7 @@ namespace AKun
         static readonly Color RING_KNEAD = Gfx.Hex("#ff9e40");
 
         // 粘土の表面からこの距離 (m) より近くでつまんだときは、粘土ごと動かす・回す操作を始めない
-        const float NO_MOVE_NEAR = 0.12f;
+        const float NO_MOVE_NEAR = 0.06f;
         // 格子が粗いので、手の太さ・影響の幅が格子 1 マスより細くなりすぎないようにする (格子単位)
         const float MIN_R_GRID = 1.2f, MIN_F_GRID = 1.5f;
         // 頭の前に置く: forward = 粘土の手前の面までの距離 (m)。drop = 0: 粘土の中心が目と同じ高さ
@@ -1385,7 +1385,7 @@ namespace AKun
                 // つまんだ所に小さな輪と音 (伸ばす音の高さは、ここからの距離で決める)
                 hfx[hs == hands[0] ? 0 : 1].pullStart = hs.pinchPos;
                 var nw = clay.rotation * n;
-                Sfx.Play("pop", hs.pinchPos, 0.45f, 0.8f);
+                Sfx.Play("pinch", hs.pinchPos, 0.7f);
                 fx.Ripple(GridToWorld(g - n * s) + nw * 0.002f, nw, new Color(1, 0.84f, 0.31f, 0.85f), 0.008f, 0.04f, 0.35f);
             }
             else if (s < WorldLenToGrid(NO_MOVE_NEAR))
@@ -1401,6 +1401,7 @@ namespace AKun
         void EndPinch(HandState hs)
         {
             if (!hs.pinching) return;
+            if (hs.pinchMode == "pull") Sfx.Play("release", hs.pinchPos, 0.6f); // 伸ばしていた粘土を離した
             hs.pinching = false;
             hs.pinchMode = null;
             manipDirty = true;
