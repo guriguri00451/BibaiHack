@@ -58,7 +58,7 @@ namespace Seeker.App
         }
 
         /// <summary>
-        /// ゲーム進行側が guest / session を作ったあとに呼び、オブジェクト同期を始める。
+        /// サーバーブラウザ（または dev-connection.json）で参加先が決まったら呼び、オブジェクト同期を始める。
         /// マップもこの接続先から取り、snapshot が mapId を載せてくるたびに読み込む。
         /// </summary>
         public void StartSync(SyncConnection connection)
@@ -142,8 +142,20 @@ namespace Seeker.App
         private void Start()
         {
             if (!isSyncStarted && DevConnectionFile.TryRead(out var devConnection)) StartSync(devConnection);
+            // 開発用の近道（dev-connection.json）が無ければ、アプリ内で接続先とセッションを選ばせる
+            if (!isSyncStarted) ShowSessionBrowser();
             // 繋ぐ場合は snapshot の mapId を待つ。あとから StartSync されたら snapshot のマップで置き換わる
             if (!isSyncStarted) RequestMap(fallbackMapId);
+        }
+
+        private void ShowSessionBrowser()
+        {
+            var browser = new GameObject("SessionBrowser").AddComponent<SessionBrowserView>();
+            browser.Joined += connection =>
+            {
+                StartSync(connection);
+                Destroy(browser.gameObject);
+            };
         }
 
         /// <summary>
