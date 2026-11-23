@@ -14,6 +14,7 @@ namespace Seeker.Sync
         private readonly SyncedObjectStore store = new SyncedObjectStore();
         private readonly GameSessionState session = new GameSessionState();
         private readonly Dictionary<string, SyncedObjectView> views = new Dictionary<string, SyncedObjectView>();
+        private readonly ServerClock clock = new ServerClock(ServerClock.SystemNowMs);
         private CoordinateAdapter adapter;
         private SeekerWsClient client;
         private GlbCache glbCache;
@@ -22,6 +23,9 @@ namespace Seeker.Sync
         public event Action Rejected;
 
         public GameSessionState Session => session;
+        /// <summary>Configure 前は null。REST（捕獲など）の送信先と認証に使う。</summary>
+        public SyncConnection Connection { get; private set; }
+        public ServerClock Clock => clock;
 
         /// <summary>フェーズ・ラウンド・参加者・結果のいずれかが変わったとき。</summary>
         public event Action SessionChanged;
@@ -40,12 +44,16 @@ namespace Seeker.Sync
         {
             if (client != null) throw new System.InvalidOperationException("SyncedObjectsController はすでに接続済み");
             adapter = coordinateAdapter;
+            Connection = connection;
             glbCache = new GlbCache();
             client = new SeekerWsClient(connection);
             client.MessageReceived += OnMessage;
             client.Rejected += () => Rejected?.Invoke();
             client.Start();
         }
+
+        /// <summary>player.transform の JSON を送る。未接続なら捨てる。</summary>
+        public void SendPlayerTransform(string json) => client?.SendText(json);
 
         private void Update()
         {
@@ -72,6 +80,7 @@ namespace Seeker.Sync
             try
             {
                 var message = ServerMessage.Parse(json);
+                if (message.Timestamp.HasValue) clock.Observe(message.Timestamp.Value);
                 if (session.Apply(message)) SessionChanged?.Invoke();
                 var mapId = GameSessionState.ReadMapId(message);
                 if (mapId != null) MapIdReceived?.Invoke(mapId);
@@ -112,6 +121,7 @@ namespace Seeker.Sync
         private void CreateView(SyncChange change)
         {
             var view = new GameObject($"Synced_{change.objectId}").AddComponent<SyncedObjectView>();
+            view.ObjectId = change.objectId;
             view.SetTarget(change.transform);
             views[change.objectId] = view;
             LoadModel(view, change.assetKey, change.assetUrl);

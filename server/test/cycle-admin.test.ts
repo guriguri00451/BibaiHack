@@ -1,5 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { fakeGlb, startServer } from "./helpers.ts";
+import { gzipSync } from "node:zlib";
+import { EMPTY_GLB, readSpzHeader } from "../src/maps/formats.ts";
+import { fakeGlb, fakeSpz, startServer } from "./helpers.ts";
 
 const ADMIN_TOKEN = "admin-token-for-tests";
 const s = await startServer({ admin: { token: ADMIN_TOKEN, open: false } });
@@ -25,10 +27,11 @@ const admin = (method: string, path: string, body?: unknown, token = ADMIN_TOKEN
   s.request(method, `/v1/admin${path}`, body, token);
 
 /** multipart で管理画面のマップ登録を送る */
-async function uploadMap(fields: Record<string, string>, glb?: Uint8Array, token = ADMIN_TOKEN) {
+async function uploadMap(fields: Record<string, string>, glb?: Uint8Array, token = ADMIN_TOKEN, splat?: Uint8Array) {
   const form = new FormData();
   for (const [k, v] of Object.entries(fields)) form.set(k, v);
   if (glb) form.set("model", new Blob([glb as Uint8Array<ArrayBuffer>], { type: "model/gltf-binary" }), "map.glb");
+  if (splat) form.set("splat", new Blob([splat as Uint8Array<ArrayBuffer>]), "map.spz");
   const res = await fetch(`${s.base}/v1/admin/maps`, { method: "POST", headers: { authorization: `Bearer ${token}` }, body: form });
   return { status: res.status, body: (await res.json()) as any };
 }
@@ -152,11 +155,56 @@ describe("マップ", () => {
     expect((await uploadMap({ mapId: "Bad_ID" }, fakeGlb())).body.error.code).toBe("INVALID_MAP_ID");
     expect((await uploadMap({ mapId: "no-model" })).body.error.code).toBe("MODEL_REQUIRED");
     expect((await uploadMap({ mapId: "not-glb" }, new Uint8Array(64))).body.error.code).toBe("NOT_GLB");
+    expect(second.body.map.splatUrl).toBeNull();
 
     expect((await admin("DELETE", "/maps/swap-me")).status).toBe(204);
     expect((await admin("DELETE", "/maps/bibai-museum")).status).toBe(409);
     const list = await admin("GET", "/maps");
     expect(list.body.maps.map((m: any) => m.mapId)).not.toContain("swap-me");
+  });
+
+  test("SPZ だけのマップを登録でき、splat.spz を認証なしで取れる。model.glb は空のシーン", async () => {
+    const spz = fakeSpz(256);
+    const up = await uploadMap({ mapId: "zone-a", name: "西側" }, undefined, ADMIN_TOKEN, spz);
+    expect(up.status).toBe(201);
+    expect(up.body.map).toMatchObject({ mapId: "zone-a", modelSize: 0, splatSize: 256 });
+
+    const r = await room();
+    const def = await s.request("GET", "/v1/maps/zone-a", undefined, r.host.accessToken);
+    expect(def.body.splatUrl).toContain("/v1/maps/zone-a/splat.spz?v=");
+    const got = await fetch(def.body.splatUrl);
+    expect(got.status).toBe(200);
+    expect([...new Uint8Array(await got.arrayBuffer())]).toEqual([...spz]);
+    const glb = await fetch(def.body.modelUrl);
+    expect([...new Uint8Array(await glb.arrayBuffer())]).toEqual([...EMPTY_GLB]);
+
+    const list = await s.request("GET", "/v1/maps", undefined, r.host.accessToken);
+    expect(list.body.maps.find((m: any) => m.mapId === "zone-a").splatUrl).toBe(def.body.splatUrl);
+    expect(list.body.maps.find((m: any) => m.mapId === "bibai-museum").splatUrl).toBeNull();
+    expect((await fetch(`${s.base}/v1/maps/bibai-museum/splat.spz`)).status).toBe(404);
+
+    // GLB が無いので SPZ は外せない
+    expect((await uploadMap({ mapId: "zone-a", removeSplat: "1" })).body.error.code).toBe("MODEL_REQUIRED");
+  });
+
+  test("SPZ を差し替えると splatUrl が変わり、GLB があれば外せる", async () => {
+    const first = await uploadMap({ mapId: "zone-b" }, fakeGlb(64), ADMIN_TOKEN, fakeSpz(80));
+    expect(first.body.map).toMatchObject({ modelSize: 64, splatSize: 80 });
+    await Bun.sleep(5);
+    const second = await uploadMap({ mapId: "zone-b" }, undefined, ADMIN_TOKEN, fakeSpz(96));
+    expect(second.body.map).toMatchObject({ modelSize: 64, splatSize: 96 });
+    expect(second.body.map.splatUrl).not.toBe(first.body.map.splatUrl);
+
+    const removed = await uploadMap({ mapId: "zone-b", removeSplat: "1" });
+    expect(removed.body.map).toMatchObject({ modelSize: 64, splatSize: null, splatUrl: null });
+  });
+
+  test("SPZ でないもの・対応していない版は弾く", async () => {
+    const send = (spz: Uint8Array) => uploadMap({ mapId: "bad-spz" }, undefined, ADMIN_TOKEN, spz);
+    expect((await send(new Uint8Array(64))).body.error.code).toBe("NOT_SPZ");
+    expect((await send(fakeSpz(64, { version: 5 }))).body.error.code).toBe("NOT_SPZ");
+    expect((await send(fakeSpz(64, { points: 0 }))).body.error.code).toBe("NOT_SPZ");
+    expect((await send(fakeSpz(16).subarray(0, 8))).body.error.code).toBe("NOT_SPZ");
   });
 });
 
@@ -197,5 +245,17 @@ describe("管理画面を閉じているとき", () => {
     } finally {
       await closed.stop();
     }
+  });
+});
+
+describe("SPZ のヘッダ", () => {
+  test("v4（生のヘッダ）と v2（全体が gzip）を読める", () => {
+    expect(readSpzHeader(fakeSpz(64, { version: 4, points: 903284, shDegree: 3 }))).toEqual({
+      version: 4,
+      points: 903284,
+      shDegree: 3,
+    });
+    const v2 = gzipSync(fakeSpz(200_000, { version: 2, points: 12, shDegree: 1 }));
+    expect(readSpzHeader(v2)).toEqual({ version: 2, points: 12, shDegree: 1 });
   });
 });

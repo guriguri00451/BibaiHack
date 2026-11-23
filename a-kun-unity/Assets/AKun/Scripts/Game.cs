@@ -138,6 +138,7 @@ namespace AKun
                     }
                 }
             }
+            if (session != null) mapId = session.Str("mapId") ?? mapId; // ホストがマップを替えると snapshot で届く
             if (!localPhase && session != null)
             {
                 int? r = Int(msg, "round") ?? Int(session, "round");

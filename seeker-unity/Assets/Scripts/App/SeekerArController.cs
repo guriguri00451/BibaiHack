@@ -30,6 +30,13 @@ namespace Seeker.App
         private Text statusLabel;
         private Text mapStatusLabel;
         private PhasePanelsView phasePanels;
+        private PoseSender poseSender;
+        private const float CaptureMessageSeconds = 3f;
+        private string statusBeforeTrackingLost;
+        private string statusBeforeCapture;
+        private string captureMessage;
+        private float captureMessageHideAt;
+        private bool wasTrackingLost;
 
         private void Awake()
         {
@@ -37,6 +44,11 @@ namespace Seeker.App
             mapPresenter = new MapPresenter(transform);
             // シーンに置いていなければ実行時に足す。接続は StartSync が呼ばれるまでしない
             if (syncedObjects == null) syncedObjects = gameObject.AddComponent<SyncedObjectsController>();
+            poseSender = gameObject.AddComponent<PoseSender>();
+            poseSender.Initialize(syncedObjects, adapter);
+            var captureInput = gameObject.AddComponent<CaptureInput>();
+            captureInput.Initialize(syncedObjects);
+            captureInput.Captured += OnCaptured;
             syncedObjects.Rejected += () => statusLabel.text = "サーバーに接続を拒否されました";
             syncedObjects.SessionChanged += RenderPhase;
             RenderPhase();
@@ -59,6 +71,48 @@ namespace Seeker.App
             if (syncedObjects == null) return;
             syncedObjects.SessionChanged -= RenderPhase;
             syncedObjects.MapIdReceived -= RequestMap;
+        }
+
+        // サーバー時刻補正後の残り時間を毎フレーム描く。0 でも勝手に遷移せず phase_changed を待つ
+        private void Update()
+        {
+            phasePanels.RenderTimer(syncedObjects.Session, syncedObjects.Clock);
+            RenderTrackingLost();
+            RestoreStatusAfterCapture();
+        }
+
+        // 演出・スコア HUD は後続タスク。ここでは結果を statusLabel に数秒だけ出す
+        private void OnCaptured(CaptureOutcome outcome)
+        {
+            if (captureMessage == null) statusBeforeCapture = statusLabel.text;
+            captureMessage = outcome.result.Message;
+            captureMessageHideAt = Time.unscaledTime + CaptureMessageSeconds;
+            statusLabel.text = captureMessage;
+        }
+
+        private void RestoreStatusAfterCapture()
+        {
+            if (captureMessage == null || Time.unscaledTime < captureMessageHideAt) return;
+            // 他の処理が文言を書き換えていたら上書きしない
+            if (statusLabel.text == captureMessage) statusLabel.text = statusBeforeCapture;
+            captureMessage = null;
+        }
+
+        // トラッキング切れの間だけ statusLabel を上書きし、復帰したら直前の文言に戻す
+        private void RenderTrackingLost()
+        {
+            var isLost = poseSender.IsTrackingLost;
+            if (isLost == wasTrackingLost) return;
+            wasTrackingLost = isLost;
+            if (isLost)
+            {
+                statusBeforeTrackingLost = statusLabel.text;
+                statusLabel.text = "トラッキングが切れています";
+            }
+            else if (statusLabel.text == "トラッキングが切れています")
+            {
+                statusLabel.text = statusBeforeTrackingLost;
+            }
         }
 
         private void RenderPhase() => phasePanels.Render(syncedObjects.Session);

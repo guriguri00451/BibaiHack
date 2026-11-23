@@ -6,14 +6,16 @@ import { z } from "@hono/zod-openapi";
 import type { AdminAccess } from "../config.ts";
 import { TransformSchema } from "../contracts/transform.ts";
 import type { GameService } from "../game/service.ts";
-import type { MapCatalog } from "../maps/maps.ts";
+import { isGlb, readSpzHeader } from "../maps/formats.ts";
+import { mapAssetUrls, type MapCatalog } from "../maps/maps.ts";
 import { externalBase } from "./base-url.ts";
 import { ApiError } from "./errors.ts";
 
-/** 管理画面から上げられるマップの GLB の大きさの上限（プレイヤーのアセットより大きい） */
+/**
+ * 管理画面から上げられるマップの GLB・SPZ の大きさの上限（プレイヤーのアセットより大きい）。
+ * Cloudflare（無料プラン）が1リクエスト 100MB までなので、それより大きくしても通らない
+ */
 export const MAX_MAP_BYTES = 100 * 1024 * 1024;
-
-const GLB_MAGIC = [0x67, 0x6c, 0x54, 0x46];
 
 const ADMIN_HTML = readFileSync(new URL("../admin/admin.html", import.meta.url), "utf8");
 
@@ -59,12 +61,15 @@ export function registerAdminRoutes(app: OpenAPIHono, deps: AdminDeps) {
   const mapJson = async (c: Context) =>
     (await maps.list()).map((m) => ({
       ...m,
-      modelUrl: `${base(c)}/v1/maps/${m.mapId}/model.glb` + (m.version === "builtin" ? "" : `?v=${m.version}`),
+      ...mapAssetUrls(base(c), m),
     }));
 
   app.get("/v1/admin/maps", async (c) => c.json({ maps: await mapJson(c) }));
 
-  /** multipart/form-data: mapId, name, transform（JSON 文字列、任意）, model（GLB、新規のときは必須） */
+  /**
+   * multipart/form-data: mapId, name, transform（JSON 文字列、任意）,
+   * model（GLB）, splat（SPZ）。新規のときはどちらか一方が要る。removeSplat=1 で SPZ を外す
+   */
   app.post("/v1/admin/maps", async (c) => {
     const form = await c.req.formData().catch(() => {
       throw new ApiError(400, "INVALID_REQUEST", "multipart/form-data で送ってください。");
@@ -78,14 +83,15 @@ export function registerAdminRoutes(app: OpenAPIHono, deps: AdminDeps) {
       if (!parsed.success) throw new ApiError(400, "INVALID_TRANSFORM", "transform は {position, rotation, scale} の JSON にしてください。");
       transform = parsed.data;
     }
-    let glb: Uint8Array | undefined;
-    const file = form.get("model");
-    if (file && typeof file !== "string" && file.size > 0) {
-      if (file.size > MAX_MAP_BYTES) throw new ApiError(400, "MODEL_TOO_LARGE", `GLB は ${MAX_MAP_BYTES / 1024 / 1024}MB までです。`);
-      glb = new Uint8Array(await file.arrayBuffer());
-      if (!GLB_MAGIC.every((b, i) => glb![i] === b)) throw new ApiError(400, "NOT_GLB", "GLB（バイナリの glTF）ではありません。");
+    const glb = await readFile(form.get("model"), "GLB", "MODEL_TOO_LARGE");
+    if (glb && !isGlb(glb)) throw new ApiError(400, "NOT_GLB", "GLB（バイナリの glTF）ではありません。");
+    const splat = await readFile(form.get("splat"), "SPZ", "SPLAT_TOO_LARGE");
+    if (splat) {
+      const header = readSpzHeader(splat);
+      if ("error" in header) throw new ApiError(400, "NOT_SPZ", header.error);
     }
-    const saved = await maps.save({ mapId, name, transform, glb });
+    const removeSplat = ["1", "true", "on"].includes(String(form.get("removeSplat") ?? ""));
+    const saved = await maps.save({ mapId, name, transform, glb, splat, removeSplat });
     return c.json({ map: (await mapJson(c)).find((m) => m.mapId === saved.mapId) }, 201);
   });
 
@@ -126,6 +132,19 @@ export function registerAdminRoutes(app: OpenAPIHono, deps: AdminDeps) {
     if (!parsed.success) throw new ApiError(400, "INVALID_REQUEST", "mapId を JSON で送ってください。");
     return c.json(await game.setMap(sessionId(c), null, parsed.data.mapId));
   });
+}
+
+/** フォームのファイル欄を読む。空なら undefined */
+async function readFile(
+  file: File | string | null,
+  label: string,
+  tooLargeCode: string,
+): Promise<Uint8Array | undefined> {
+  if (!file || typeof file === "string" || file.size === 0) return undefined;
+  if (file.size > MAX_MAP_BYTES) {
+    throw new ApiError(400, tooLargeCode, `${label} は ${MAX_MAP_BYTES / 1024 / 1024}MB までです。`);
+  }
+  return new Uint8Array(await file.arrayBuffer());
 }
 
 function safeJson(s: string): unknown {
