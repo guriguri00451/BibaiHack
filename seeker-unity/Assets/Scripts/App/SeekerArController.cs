@@ -1,6 +1,7 @@
 using Seeker.Ar;
 using Seeker.Sync;
 using UnityEngine;
+using UnityEngine.Serialization;
 using UnityEngine.UI;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
@@ -11,18 +12,23 @@ namespace Seeker.App
     /// マーカーを読んでいる間は共有マップの原点を合わせ続け、読み込んだ3Dマップをその原点に置く。XR Origin は動かさない。
     /// 目印のオブジェクトは ARTrackedImageManager の Tracked Image Prefab がマーカーに追従して出す。
     /// マーカーを見失ったら最後に合わせた原点を維持する。
+    /// 置くマップはセッションの mapId（snapshot）に従い、替わったら置き直す。接続情報が無いときだけモックを読む。
     /// </summary>
     public sealed class SeekerArController : MonoBehaviour
     {
         [SerializeField] private ARTrackedImageManager imageManager;
         [SerializeField] private SyncedObjectsController syncedObjects;
-        [SerializeField] private string mapId = "bibai-museum";
-        // 空ならモック(StreamingAssets/mock)を使う。API 実装後に https://host/v1 を入れる
-        [SerializeField] private string apiBaseUrl = "";
+        // 接続情報が無い（サーバーに繋がない）ときに StreamingAssets/mock から読むマップ
+        [FormerlySerializedAs("mapId")]
+        [SerializeField] private string fallbackMapId = "bibai-museum";
 
         private readonly CoordinateAdapter adapter = new CoordinateAdapter();
+        private readonly MapLoadTracker mapLoads = new MapLoadTracker();
+        private MapService mapService = new MapService();
+        private bool isSyncStarted;
         private MapPresenter mapPresenter;
         private Text statusLabel;
+        private Text mapStatusLabel;
         private PhasePanelsView phasePanels;
 
         private void Awake()
@@ -36,31 +42,76 @@ namespace Seeker.App
             RenderPhase();
         }
 
-        /// <summary>ゲーム進行側が guest / session を作ったあとに呼び、オブジェクト同期を始める。</summary>
-        public void StartSync(SyncConnection connection) => syncedObjects.Configure(adapter, connection);
+        /// <summary>
+        /// ゲーム進行側が guest / session を作ったあとに呼び、オブジェクト同期を始める。
+        /// マップもこの接続先から取り、snapshot が mapId を載せてくるたびに読み込む。
+        /// </summary>
+        public void StartSync(SyncConnection connection)
+        {
+            syncedObjects.Configure(adapter, connection);
+            isSyncStarted = true;
+            mapService = new MapService(connection.RestBaseUrl, connection.AccessToken);
+            syncedObjects.MapIdReceived += RequestMap;
+        }
 
         private void OnDestroy()
         {
-            if (syncedObjects != null) syncedObjects.SessionChanged -= RenderPhase;
+            if (syncedObjects == null) return;
+            syncedObjects.SessionChanged -= RenderPhase;
+            syncedObjects.MapIdReceived -= RequestMap;
         }
 
         private void RenderPhase() => phasePanels.Render(syncedObjects.Session);
 
-        private async void Start()
+        private void Start()
         {
-            if (DevConnectionFile.TryRead(out var devConnection)) StartSync(devConnection);
+            if (!isSyncStarted && DevConnectionFile.TryRead(out var devConnection)) StartSync(devConnection);
+            // 繋ぐ場合は snapshot の mapId を待つ。あとから StartSync されたら snapshot のマップで置き換わる
+            if (!isSyncStarted) RequestMap(fallbackMapId);
+        }
+
+        /// <summary>
+        /// マップ定義を取り、GLB が変わっていれば読み込み直して置く。連続で呼ばれたら最後の呼び出しだけ反映する。
+        /// 失敗しても表示中のマップは残す。
+        /// </summary>
+        private async void RequestMap(string mapId)
+        {
+            var request = mapLoads.BeginRequest();
+            bool IsLatest() => this != null && mapLoads.IsLatest(request);
             try
             {
-                var definition = await new MapService(apiBaseUrl).FetchAsync(mapId);
-                await mapPresenter.LoadAsync(definition);
+                var definition = await mapService.FetchAsync(mapId);
+                if (!IsLatest()) return;
+                if (mapLoads.NeedsReload(definition))
+                {
+                    if (!await mapPresenter.LoadAsync(definition, IsLatest)) return;
+                    mapLoads.MarkLoaded(definition);
+                }
+                else
+                {
+                    // GLB は同じでも、管理画面で置き方だけ変えていることがある
+                    mapPresenter.SetTransform(definition);
+                }
+                ShowMapError(null);
                 // 読み込み前にマーカーを捉えていた場合に備えて、ここでも置く
                 mapPresenter.Place(adapter);
+            }
+            catch (MapFetchException e) when (e.IsNotFound)
+            {
+                Debug.LogWarning($"[SeekerAr] {e.Message}");
+                if (IsLatest()) ShowMapError($"マップ「{mapId}」がサーバーにありません");
             }
             catch (System.Exception e)
             {
                 Debug.LogException(e);
-                statusLabel.text = "マップの読み込みに失敗しました";
+                if (IsLatest()) ShowMapError("マップを読み込めません（通信を確認）");
             }
+        }
+
+        private void ShowMapError(string message)
+        {
+            mapStatusLabel.text = message ?? "";
+            mapStatusLabel.transform.parent.gameObject.SetActive(message != null);
         }
 
         private void OnEnable() => imageManager.trackablesChanged.AddListener(OnTrackablesChanged);
@@ -99,6 +150,9 @@ namespace Seeker.App
             statusLabel = CreateText(canvasObject.transform, "マーカーを映してください", new Vector2(0.5f, 1f), new Vector2(0f, -120f), new Vector2(980f, 120f));
             // マーカー状況は playing（探索中）の HUD。他フェーズでは全画面パネルが出る
             phasePanels = new PhasePanelsView(canvasObject.transform, statusLabel.transform.parent.gameObject);
+            // マーカー状況は毎フレーム書き換わるので、マップのエラーは別の枠に出す。フェーズの全画面パネルより後に作って手前に出す
+            mapStatusLabel = CreateText(canvasObject.transform, "", new Vector2(0.5f, 0f), new Vector2(0f, 160f), new Vector2(980f, 120f));
+            ShowMapError(null);
         }
 
         private static Font UiFont => Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
