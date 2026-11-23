@@ -95,8 +95,14 @@ namespace AKun
         Post post;
         public MapView map;
         Task mapLoading;
-        string mapLoadingId;
+        string mapLoadingId;     // 読み込んでいる (読み込んだ) ステージの ID。いちばん新しく頼まれたもの
         bool hiding, mapPlaced; // hiding: 投稿の前に、マップの上で隠す場所を選んでいる間
+
+        // ステージ (マップのモデル) の読み込みの状態。選んだらすぐ読み始めて、隠す場所を選ぶ前に終わらせておく
+        public enum StageState { None, Loading, Ready, Failed }
+        public StageState Stage { get; private set; }
+        public string StageId => mapLoadingId;
+        public string StageError { get; private set; }
         readonly List<ButtonPanel> uiPanels = new List<ButtonPanel>();
         bool xrActive;
         bool recenterPending = true;
@@ -161,7 +167,7 @@ namespace AKun
             post = new Post(this, workspace, PANEL_Z);
             tutorial = new Tutorial();
             BuildWristMenu();
-            uiPanels.Add(panel); uiPanels.Add(propPanel); uiPanels.Add(post.Panel); uiPanels.Add(post.HidePanel); uiPanels.Add(post.GamePanel);
+            uiPanels.Add(panel); uiPanels.Add(propPanel); uiPanels.Add(post.Panel); uiPanels.Add(post.HidePanel); uiPanels.Add(post.GamePanel); uiPanels.Add(post.StagePanel);
             uiPanels.Add(wrist.panel);
             ButtonPanel.Pressed = p => Sfx.Play("click", p);
             ButtonPanel.Hovered = p => Sfx.Play("hover", p, 1, 1, 0.06f);
@@ -685,6 +691,53 @@ namespace AKun
             await map.Load(id);
         }
 
+        // ステージのモデルを取ってくる (マップ定義 → GLB)。ステージを選んだらすぐ呼ぶ。
+        // 同じステージを読み込み中・読み込み済みなら何もしない。読み込めなかったあとに呼ぶと、もう一度読む。
+        // 別のステージを頼まれたら、読んでいるものが終わってから続けて読む (MapView は 1 つなので同時には読めない)。
+        // 頼んだ後にさらに別のステージを頼まれたときは、このステージは読まずに終わる (呼んだ側は map.LoadedId で確かめる)
+        public Task LoadStage(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return Task.CompletedTask;
+            if (map.IsLoaded && map.LoadedId == id && mapLoadingId == id) return Task.CompletedTask;
+            if (mapLoading != null && mapLoadingId == id && Stage == StageState.Loading) return mapLoading;
+            var prev = mapLoading;
+            mapLoadingId = id;
+            Stage = StageState.Loading;
+            StageError = null;
+            return mapLoading = LoadStageAfter(prev, id);
+        }
+
+        async Task LoadStageAfter(Task prev, string id)
+        {
+            if (prev != null) { try { await prev; } catch (Exception) { /* 前のステージの失敗は、前の呼び出しが知らせる */ } }
+            if (mapLoadingId != id) return; // もっと新しいステージを頼まれた
+            string name = post.Server?.MapName(id) ?? id;
+            Log($"ステージを取得します: {name}");
+            try
+            {
+                await LoadMap(id);
+                if (mapLoadingId != id) return;
+                mapPlaced = false; // 大きさが違うので、作業台の上に置き直す
+                Stage = StageState.Ready;
+                Log($"ステージを取得しました: {map.Name}");
+            }
+            catch (Exception e)
+            {
+                if (mapLoadingId == id) { Stage = StageState.Failed; StageError = e.Message; }
+                Log($"ステージを取得できません ({name}): {e.Message}");
+                throw;
+            }
+        }
+
+        public bool StageLoading => Stage == StageState.Loading;
+
+        // ステージのモデルをすぐ取りにいく (待たない。結果はログと Stage に出る)
+        public async void PreloadStage(string id)
+        {
+            try { await LoadStage(id); }
+            catch (Exception) { /* Stage と StageError とログに出ている。「投稿する」でもう一度取りにいく */ }
+        }
+
         // ================= 粘土 =================
         void RemeshDirty()
         {
@@ -789,21 +842,11 @@ namespace AKun
         // spot: 前に隠した場所 (マップの root から見た位置)。あれば最初から選んでおく
         public async Task BeginHide(Mesh shape, (Vector3 pos, Quaternion rot)? spot)
         {
-            // ホストがマップを替えていたら読み直す (ラウンドの途中では替わらない)
+            // ステージのモデルは、選んだときに取りにいってある (まだなら、ここで待つ。取れなかったなら、もう一度取りにいく)。
+            // 取れてから、そのモデルの中に隠す場所を選ぶ
             string want = post.Server?.game.mapId ?? mapId;
-            if (!map.IsLoaded || map.LoadedId != want)
-            {
-                if (mapLoading == null || mapLoadingId != want)
-                {
-                    Log($"マップを読み込みます: {post.Server?.MapName(want) ?? want}");
-                    mapLoadingId = want;
-                    mapLoading = LoadMap(want);
-                    mapPlaced = false; // 大きさが違うので、作業台の上に置き直す
-                }
-                try { await mapLoading; }
-                catch (Exception) { mapLoading = null; throw; } // 次の「投稿する」でもう一度読む
-                Log($"マップを読み込みました: {map.Name}");
-            }
+            await LoadStage(want);
+            if (!map.IsLoaded || map.LoadedId != want) throw new Exception("ステージが替わりました。もう一度「投稿する」を押してください");
             if (!mapPlaced) { PlaceMapOnTable(); mapPlaced = true; }
             if (spot != null) map.SetSpotLocal(spot.Value.pos, spot.Value.rot);
             else map.ClearSpot();

@@ -34,12 +34,16 @@ namespace AKun
         string lastStatus;
         bool lastCaught, lastConnected = true;
         readonly ButtonPanel xrPanel, hidePanel, gamePanel;
+        readonly StagePicker stages;   // ステージを選ぶパネル (サーバーにつないでいる間)
+        string autoStage;              // 取りにいったステージ (部屋のステージが替わったら、すぐ取りにいく)
         ClayApp.ExportResult? pending; // 隠す場所を選んでいる間の、投稿する形
 
         public IPostTarget Target => target;
         public ButtonPanel Panel => xrPanel;
         public ButtonPanel HidePanel => hidePanel;
         public ButtonPanel GamePanel => gamePanel;
+        public ButtonPanel StagePanel => stages.Panel;
+        public bool PickingStage => stages.IsOpen;
         public bool Choosing => pending != null;
         public ServerTarget Server => target as ServerTarget;
 
@@ -57,7 +61,7 @@ namespace AKun
                 new ButtonDef
                 {
                     id = "post", x = -(bw + gap), y = -0.04f, w = bw, h = bh, color = "#81c784",
-                    label = () => busy ? "送信中…" : Blocked != null ? "投稿できません" : Editing != null ? $"#{Editing.n} を更新" : "投稿する",
+                    label = () => busy ? (app.StageLoading ? "ステージ取得中…" : "送信中…") : Blocked != null ? "投稿できません" : Editing != null ? $"#{Editing.n} を更新" : "投稿する",
                     onPress = DoPost, isEnabled = () => !busy && Blocked == null,
                 },
                 new ButtonDef
@@ -97,12 +101,12 @@ namespace AKun
                 new ButtonDef { id = "phase", label = PhaseLine, x = 0, y = 0, w = gw, h = gh },
                 new ButtonDef { id = "me", label = MeLine, x = 0, y = -(gh + gap), w = gw, h = gh },
                 new ButtonDef { id = "people", label = PeopleLine, x = 0, y = -2 * (gh + gap), w = gw, h = gh },
-                // マップ: ホストは待機中とラウンドの終わった後に押して次のマップにする (ケイ側は選ばない。サーバーから届く)
+                // ステージ: 押すと、サーバーのステージ一覧のパネルが開く。ホストが待機中・ラウンドの後に選ぶ (ケイ側は選ばない。サーバーから届く)
                 new ButtonDef
                 {
                     id = "map", label = MapLine, x = 0, y = -3 * (gh + gap), w = gw, h = gh,
-                    onPress = () => { if (Server != null) _ = Server.NextMap(); },
-                    isEnabled = () => Server != null && Server.CanChangeMap && !busy && !Choosing,
+                    onPress = OpenStages,
+                    isEnabled = () => Server != null && !busy && !Choosing && !stages.IsOpen,
                 },
                 new ButtonDef
                 {
@@ -114,6 +118,23 @@ namespace AKun
             gamePanel.group.localPosition = new Vector3(0.3f, 0.02f, -panelZ);
             gamePanel.group.localRotation = Quaternion.Euler(0.3f * Mathf.Rad2Deg, 0.6f * Mathf.Rad2Deg, 0);
             gamePanel.Visible = false;
+
+            // ステージを選ぶパネル (投稿のパネルと入れ替えて、中央に出す)
+            stages = new StagePicker(app, workspace, panelZ, () => Server, CloseStages);
+        }
+
+        // ---------- ステージを選ぶ ----------
+        void OpenStages()
+        {
+            if (Server == null || stages.IsOpen || Choosing) return;
+            xrPanel.Visible = false;
+            stages.Open();
+        }
+
+        void CloseStages()
+        {
+            stages.Close();
+            if (!Choosing) xrPanel.Visible = true;
         }
 
         // ---------- ゲームのパネル ----------
@@ -146,16 +167,17 @@ namespace AKun
             return $"参加 {g.players.Count} 人 (ケイ {g.Count("seeker")}) · 部屋 {ServerTarget.Short(g.sessionId)}";
         }
 
+        // ステージの欄: 名前と、モデルの取得の状態。押すと一覧 (ホストは選べる)
         string MapLine()
         {
             var s = Server;
             if (s == null) return "";
             string name = s.MapName(s.game.mapId);
-            if (!s.game.IsHost || s.maps.Count <= 1) return $"マップ: {name}";
-            if (s.MapBusy) return $"マップ: {name} (替えています…)";
-            if (!s.CanChangeMap) return $"マップ: {name}";
-            int i = s.maps.FindIndex(m => m.id == s.game.mapId);
-            return $"マップ: {name} ({i + 1}/{s.maps.Count}) ▶ 次へ";
+            if (s.MapBusy) return $"ステージ: {name} (替えています…)";
+            string state = app.StageId != s.game.mapId ? " (取得待ち)"
+                : app.Stage == ClayApp.StageState.Loading ? " (取得中…)"
+                : app.Stage == ClayApp.StageState.Failed ? " (取得できません)" : "";
+            return $"ステージ: {name}{state}{(s.CanChangeMap ? " ▶ 選ぶ" : " ▶ 一覧")}";
         }
 
         string HostLabel()
@@ -216,6 +238,14 @@ namespace AKun
             {
                 if (!s.Connected) return L("サーバーとの接続が切れています", "つながるまで、粘土はそのまま作れます", -1);
                 if (g.IsCaught) return L("見つかった！", "このラウンドはもう動かせません。次のラウンドを待とう", -1);
+                if (stages.IsOpen)
+                    return L(s.CanChangeMap ? "ステージを選ぼう" : "ステージを確かめよう", "選ぶと、そのモデルをサーバーから取ってくる。取れたら、その中に隠す", 0);
+                // 待っている間に、ステージのモデルを取っておく (隠す場所はそのモデルの中で選ぶ)
+                if (g.status == GameState.WAITING || g.status == GameState.FINISHED)
+                {
+                    if (app.StageLoading) return L("ステージを取得しています…", $"{s.MapName(g.mapId)} のモデルをサーバーから取っています", 0);
+                    if (app.Stage == ClayApp.StageState.Failed) return L("ステージを取得できません", "右のパネルの「ステージ」を押すと、取り直せます", 0);
+                }
                 switch (g.status)
                 {
                     case GameState.WAITING:
@@ -225,6 +255,7 @@ namespace AKun
                 }
                 if (g.myRole == "seeker") return L("このラウンドはケイ (探す側) です", "スマホで探す人を応援しよう", -1);
             }
+            if (busy && app.StageLoading) return L("ステージを取得しています…", "取れたら、そのモデルの上に隠す場所を選べます", 1);
             if (busy) return L("送信中…", "少し待ってください", hiding ? 1 : 0);
             if (hiding)
                 return hasSpot
@@ -428,6 +459,7 @@ namespace AKun
         {
             target.Close();
             target = t;
+            autoStage = null; // 新しい部屋のステージは、改めて取りにいく
             ClearPosts();
             lastRound = Server?.game.round ?? -1;
             gamePanel.Visible = Server != null;
@@ -483,6 +515,7 @@ namespace AKun
                 }
                 // フェーズが変わった・見つかった・接続が切れた / つながった
                 var g = s.game;
+                FetchStage(s);
                 if (lastStatus != null && g.status != lastStatus) OnPhase(g);
                 lastStatus = g.status;
                 if (g.IsCaught && !lastCaught) Notify("見つかった！ このラウンドはもう動かせません", Hud.ERROR, "alarm", false);
@@ -503,6 +536,17 @@ namespace AKun
             if (xrPanel.Visible) xrPanel.Refresh();
             if (hidePanel.Visible) hidePanel.Refresh();
             if (gamePanel.Visible) gamePanel.Refresh();
+            stages.Update();
+        }
+
+        // つないだとき・ホストがステージを替えたときに、そのモデルをすぐ取りにいく。
+        // 隠す場所を選ぶ前に取り終えておく (取れなかったときは、ここでは繰り返さない。ステージの欄を押すか、「投稿する」で取り直す)
+        void FetchStage(ServerTarget s)
+        {
+            string id = s.game.mapId;
+            if (string.IsNullOrEmpty(id) || id == autoStage || Choosing) return;
+            autoStage = id;
+            app.PreloadStage(id);
         }
     }
 }
