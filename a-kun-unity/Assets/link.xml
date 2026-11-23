@@ -1,0 +1,6 @@
+<linker>
+  <!-- MapView が GaussianSplatRenderer の m_GpuPosData (点の座標) を名前で引くので、IL2CPP の削除から外す -->
+  <assembly fullname="GaussianSplatting">
+    <type fullname="GaussianSplatting.Runtime.GaussianSplatRenderer" preserve="fields" />
+  </assembly>
+</linker>

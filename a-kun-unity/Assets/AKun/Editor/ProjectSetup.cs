@@ -101,6 +101,7 @@ namespace AKun.EditorTools
                 AssetDatabase.CreateAsset(renderer, rendererPath);
             }
             renderer.postProcessData = null; // ポストエフェクトは使わない (Android XR の推奨)
+            AddSplatFeature(renderer);
             EditorUtility.SetDirty(renderer);
             var urp = AssetDatabase.LoadAssetAtPath<UniversalRenderPipelineAsset>(assetPath);
             if (urp == null)
@@ -122,6 +123,27 @@ namespace AKun.EditorTools
                 QualitySettings.renderPipeline = urp;
             }
             QualitySettings.SetQualityLevel(cur, false);
+        }
+
+        // マップの Gaussian Splat (SPZ) を描く URP の Renderer Feature (UnityGaussianSplatting)。足りなければ足す。
+        // パッケージ側で internal なので型名で引く。描くには Vulkan が要る (並べ替えのシェーダーが Wave 命令を使う)
+        static void AddSplatFeature(UniversalRendererData data)
+        {
+            var type = Type.GetType("GaussianSplatting.Runtime.GaussianSplatURPFeature, GaussianSplatting");
+            if (type == null) throw new InvalidOperationException("GaussianSplatURPFeature が見つかりません (Packages/manifest.json に org.nesnausk.gaussian-splatting があるか確認)");
+            if (data.rendererFeatures.Exists(f => f != null && f.GetType() == type)) return;
+            var feature = ScriptableObject.CreateInstance(type);
+            feature.name = type.Name;
+            AssetDatabase.AddObjectToAsset(feature, data);
+            AssetDatabase.TryGetGUIDAndLocalFileIdentifier(feature, out _, out long localId);
+            var so = new SerializedObject(data);
+            var features = so.FindProperty("m_RendererFeatures");
+            var map = so.FindProperty("m_RendererFeatureMap");
+            features.arraySize++;
+            features.GetArrayElementAtIndex(features.arraySize - 1).objectReferenceValue = feature;
+            map.arraySize++;
+            map.GetArrayElementAtIndex(map.arraySize - 1).longValue = localId;
+            so.ApplyModifiedPropertiesWithoutUndo();
         }
 
         static void SetupXR()

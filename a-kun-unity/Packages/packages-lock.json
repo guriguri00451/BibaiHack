@@ -249,6 +249,17 @@
       },
       "url": "https://packages.unity.com"
     },
+    "org.nesnausk.gaussian-splatting": {
+      "version": "https://github.com/aras-p/UnityGaussianSplatting.git?path=/package",
+      "depth": 0,
+      "source": "git",
+      "dependencies": {
+        "com.unity.burst": "1.8.8",
+        "com.unity.collections": "2.1.4",
+        "com.unity.mathematics": "1.2.6"
+      },
+      "hash": "0cc0bf8bb0e9af75ff1c002592024f86057ced58"
+    },
     "com.unity.modules.androidjni": {
       "version": "1.0.0",
       "depth": 0,

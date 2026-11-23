@@ -3,7 +3,7 @@
 [a-kun](../a-kun/) (WebXR 版) を Unity で作り直したものです。中身 (粘土の計算、手の触り方、パネル、投稿) は Web 版と同じで、Android XR (Galaxy XR など) のアプリとして動きます。
 
 - Unity **6000.3.22f1** (URP、OpenXR、Android XR)
-- パッケージ: Unity OpenXR: Android XR 1.5.1、XR Hands、AR Foundation (パススルー)、Input System、glTFast 6.21.0 (マップの読み込み)
+- パッケージ: Unity OpenXR: Android XR 1.5.1、XR Hands、AR Foundation (パススルー)、Input System、glTFast 6.21.0 (マップの GLB)、UnityGaussianSplatting (マップの SPZ。seeker-unity と同じ)
 - 仕様: [docs/whiteboard-brainstorm.md](../docs/whiteboard-brainstorm.md)
 
 ## ファイル
@@ -20,9 +20,10 @@
 | `Assets/AKun/Scripts/Hands.cs` | 手の関節・骨、震えを抑えるフィルタ、半透明の手の描画 |
 | `Assets/AKun/Scripts/ButtonPanel.cs` | 空中のボタン・スライダー・色見本。指先で押す / レイで指してつまむ (`a-kun/src/panel.js` の移植) |
 | `Assets/AKun/Scripts/Post.cs` / `Uploader.cs` | 投稿のパネルと投稿先 (この端末内 / ゲームサーバー) (`a-kun/src/post/` の移植) |
+| `Assets/AKun/Scripts/SplatProxy.cs` | Gaussian Splat の点から作る粗い占有格子。Splat には当たり判定が無いので、隠す場所を指すレイはこれに当てる |
 | `Assets/AKun/Scripts/Glb.cs` | GLB の書き出し |
 | `Assets/AKun/Scripts/StagePicker.cs` | ステージを選ぶパネル。サーバーのステージ一覧から選び、そのモデルを取りにいく (隠す場所を選ぶ前の段階) |
-| `Assets/AKun/Scripts/MapView.cs` | 隠す場所を選ぶマップの模型。マップ定義と GLB の読み込み、レイの当たり判定、隠す場所の Transform (seeker-unity の `MapService` / `MapDefinition` / `MapPresenter` をもとにした) |
+| `Assets/AKun/Scripts/MapView.cs` | 隠す場所を選ぶマップの模型。マップ定義と GLB・Gaussian Splat (SPZ) の読み込み、レイの当たり判定、隠す場所の Transform (seeker-unity の `MapService` / `MapDefinition` / `MapPresenter` をもとにした) |
 | `Assets/StreamingAssets/mock/` | マップのモック (seeker-unity と同じ `bibai-museum`) |
 | `Assets/AKun/Resources/Shaders/` | 粘土 (頂点カラー)、半透明の手、パネルの角丸、文字 |
 | `Assets/AKun/Editor/ProjectSetup.cs` | プロジェクトの設定 (Player、URP、XR、シーン) と APK のビルド |
