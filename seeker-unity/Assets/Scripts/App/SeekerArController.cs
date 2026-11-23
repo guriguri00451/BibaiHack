@@ -24,6 +24,9 @@ namespace Seeker.App
         private MapPresenter mapPresenter;
         private Text statusLabel;
         private PhasePanelsView phasePanels;
+        private PoseSender poseSender;
+        private string statusBeforeTrackingLost;
+        private bool wasTrackingLost;
 
         private void Awake()
         {
@@ -31,6 +34,8 @@ namespace Seeker.App
             mapPresenter = new MapPresenter(transform);
             // シーンに置いていなければ実行時に足す。接続は StartSync が呼ばれるまでしない
             if (syncedObjects == null) syncedObjects = gameObject.AddComponent<SyncedObjectsController>();
+            poseSender = gameObject.AddComponent<PoseSender>();
+            poseSender.Initialize(syncedObjects, adapter);
             syncedObjects.Rejected += () => statusLabel.text = "サーバーに接続を拒否されました";
             syncedObjects.SessionChanged += RenderPhase;
             RenderPhase();
@@ -45,7 +50,28 @@ namespace Seeker.App
         }
 
         // サーバー時刻補正後の残り時間を毎フレーム描く。0 でも勝手に遷移せず phase_changed を待つ
-        private void Update() => phasePanels.RenderTimer(syncedObjects.Session, syncedObjects.Clock);
+        private void Update()
+        {
+            phasePanels.RenderTimer(syncedObjects.Session, syncedObjects.Clock);
+            RenderTrackingLost();
+        }
+
+        // トラッキング切れの間だけ statusLabel を上書きし、復帰したら直前の文言に戻す
+        private void RenderTrackingLost()
+        {
+            var isLost = poseSender.IsTrackingLost;
+            if (isLost == wasTrackingLost) return;
+            wasTrackingLost = isLost;
+            if (isLost)
+            {
+                statusBeforeTrackingLost = statusLabel.text;
+                statusLabel.text = "トラッキングが切れています";
+            }
+            else if (statusLabel.text == "トラッキングが切れています")
+            {
+                statusLabel.text = statusBeforeTrackingLost;
+            }
+        }
 
         private void RenderPhase() => phasePanels.Render(syncedObjects.Session);
 

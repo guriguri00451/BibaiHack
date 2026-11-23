@@ -1,3 +1,4 @@
+using System.Linq;
 using NUnit.Framework;
 using Seeker.Ar;
 using Seeker.Sync;
@@ -274,6 +275,145 @@ namespace Seeker.Ar.Tests
         public void Constructor_Throws_WhenAccessTokenIsEmpty()
         {
             Assert.Throws<System.ArgumentException>(() => new SyncConnection("wss://x/v1/ws", "https://x/v1", "session", ""));
+        }
+    }
+}
+
+namespace Seeker.Ar.Tests
+{
+    public class PoseSendPolicyTests
+    {
+        private long now = 1_700_000_000_000;
+
+        private PoseSendPolicy NewPolicy() => new PoseSendPolicy(() => now);
+
+        private static MapTransform Pose(Quaternion rotation) => new MapTransform(new Vector3(1, 2, 3), rotation, Vector3.one);
+
+        private bool TrySend(PoseSendPolicy policy, out string json, bool calibrated = true, bool tracking = true, bool playing = true)
+            => policy.TryCreateMessage(calibrated, tracking, playing, () => Pose(Quaternion.identity), out json);
+
+        private static long ClientSeqOf(string json) => (long)Newtonsoft.Json.Linq.JObject.Parse(json)["payload"]["clientSeq"];
+
+        [Test]
+        public void TryCreateMessage_Sends_OnFirstCall()
+        {
+            Assert.That(TrySend(NewPolicy(), out _), Is.True);
+        }
+
+        [Test]
+        public void TryCreateMessage_DoesNotSend_WhenCalledWithinInterval()
+        {
+            var policy = NewPolicy();
+            TrySend(policy, out _);
+            now += 30;
+
+            Assert.That(TrySend(policy, out _), Is.False);
+        }
+
+        [Test]
+        public void TryCreateMessage_Sends_WhenIntervalElapsed()
+        {
+            var policy = NewPolicy();
+            TrySend(policy, out _);
+            now += 67;
+
+            Assert.That(TrySend(policy, out _), Is.True);
+        }
+
+        [Test]
+        public void TryCreateMessage_SendsAbout15TimesPerSecond_WhenCalledEveryFrameAt60Fps()
+        {
+            var policy = NewPolicy();
+            var sentCount = 0;
+            for (var frame = 0; frame < 60; frame++)
+            {
+                if (TrySend(policy, out _)) sentCount++;
+                now += 1000 / 60;
+            }
+
+            Assert.That(sentCount, Is.InRange(12, 16));
+        }
+
+        [Test]
+        public void TryCreateMessage_IncreasesClientSeqMonotonically()
+        {
+            var policy = NewPolicy();
+            TrySend(policy, out var first);
+            now += 100;
+            TrySend(policy, out var second);
+
+            Assert.That(ClientSeqOf(second), Is.GreaterThan(ClientSeqOf(first)));
+        }
+
+        [Test]
+        public void TryCreateMessage_ClientSeqDoesNotGoBack_WhenPolicyIsRecreated()
+        {
+            var policy = NewPolicy();
+            long last = 0;
+            for (var i = 0; i < 100; i++)
+            {
+                TrySend(policy, out var json);
+                last = ClientSeqOf(json);
+                now += 100;
+            }
+            var restarted = NewPolicy();
+            TrySend(restarted, out var afterRestart);
+
+            Assert.That(ClientSeqOf(afterRestart), Is.GreaterThan(last));
+        }
+
+        [Test]
+        public void TryCreateMessage_NormalizesRotation()
+        {
+            var policy = NewPolicy();
+            policy.TryCreateMessage(true, true, true, () => Pose(new Quaternion(0, 0, 0, 5f)), out var json);
+
+            var rotation = Newtonsoft.Json.Linq.JObject.Parse(json)["payload"]["transform"]["rotation"];
+            var length = Mathf.Sqrt(rotation.Sum(c => (float)c * (float)c));
+            Assert.That(length, Is.EqualTo(1f).Within(1e-5f));
+        }
+
+        [Test]
+        public void TryCreateMessage_DoesNotSend_WhenNotCalibrated()
+        {
+            Assert.That(TrySend(NewPolicy(), out _, calibrated: false), Is.False);
+        }
+
+        [Test]
+        public void TryCreateMessage_DoesNotSend_WhenNotTracking()
+        {
+            Assert.That(TrySend(NewPolicy(), out _, tracking: false), Is.False);
+        }
+
+        [Test]
+        public void TryCreateMessage_DoesNotSend_WhenNotPlaying()
+        {
+            Assert.That(TrySend(NewPolicy(), out _, playing: false), Is.False);
+        }
+
+        [Test]
+        public void TryCreateMessage_DoesNotReadPose_WhenNotCalibrated()
+        {
+            var isRead = false;
+            NewPolicy().TryCreateMessage(false, true, true, () => { isRead = true; return Pose(Quaternion.identity); }, out _);
+
+            Assert.That(isRead, Is.False);
+        }
+
+        [Test]
+        public void TryCreateMessage_BuildsPlayerTransformShape()
+        {
+            TrySend(NewPolicy(), out var json);
+
+            var root = Newtonsoft.Json.Linq.JObject.Parse(json);
+            var transform = root["payload"]["transform"];
+            Assert.That(
+                (string)root["type"] == "player.transform"
+                && transform["position"].Count() == 3
+                && transform["rotation"].Count() == 4
+                && transform["scale"].Count() == 3
+                && (float)transform["scale"][0] == 1f,
+                Is.True);
         }
     }
 }
