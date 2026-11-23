@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Reflection;
 using System.Threading.Tasks;
+using GaussianSplatting.Runtime;
 using GLTFast;
 using GLTFast.Logging;
 using GLTFast.Materials;
@@ -24,6 +27,9 @@ namespace AKun
         readonly MeshFilter spotMesh;
         readonly Material spotMat;
         readonly List<Collider> colliders = new List<Collider>();
+        // Gaussian Splat (SPZ)。GLB の代わりに (または GLB と一緒に) 置く。Collider が無いので、レイは SplatProxy に当てる
+        GaussianSplatRenderer splat;
+        SplatProxy splatProxy;
 
         public bool IsLoaded { get; private set; }
         public string Name { get; private set; } = "";
@@ -71,16 +77,21 @@ namespace AKun
             if (!(MiniJson.Parse(json) is Dictionary<string, object> def)) throw new Exception("マップ定義が JSON ではありません");
             Clear();
             string modelUrl = def.Str("modelUrl");
-            if (string.IsNullOrEmpty(modelUrl)) throw new Exception("マップ定義に modelUrl がありません");
+            string splatUrl = def.Str("splatUrl");
+            if (string.IsNullOrEmpty(modelUrl) && string.IsNullOrEmpty(splatUrl)) throw new Exception("マップ定義に modelUrl も splatUrl もありません");
             Name = def.Str("name") ?? mapId;
 
-            // 再生していないとき (エディタでの確認) は、glTFast の既定の DeferAgent が使えない (DontDestroyOnLoad するため)
-            var gltf = new GltfImport(
-                deferAgent: Application.isPlaying ? null : new UninterruptedDeferAgent(),
-                materialGenerator: new ClayMaterialGenerator());
-            string glbUrl = ResolveStreamingAssets(modelUrl);
-            if (!await gltf.Load(glbUrl)) throw new Exception($"マップの GLB を読めません: {glbUrl}");
-            if (!await gltf.InstantiateMainSceneAsync(model)) throw new Exception("マップの GLB を置けません");
+            // GLB。SPZ だけのマップでは空のシーンが入っている
+            if (!string.IsNullOrEmpty(modelUrl))
+            {
+                // 再生していないとき (エディタでの確認) は、glTFast の既定の DeferAgent が使えない (DontDestroyOnLoad するため)
+                var gltf = new GltfImport(
+                    deferAgent: Application.isPlaying ? null : new UninterruptedDeferAgent(),
+                    materialGenerator: new ClayMaterialGenerator());
+                string glbUrl = ResolveStreamingAssets(modelUrl);
+                if (!await gltf.Load(glbUrl)) throw new Exception($"マップの GLB を読めません: {glbUrl}");
+                if (!await gltf.InstantiateMainSceneAsync(model)) throw new Exception("マップの GLB を置けません");
+            }
 
             // glTFast が GLB の中身は Unity の座標に直している。残るマップ定義の transform だけ z を反転して当てる
             var t = def.TryGetValue("transform", out var tv) ? tv as Dictionary<string, object> : null;
@@ -91,6 +102,9 @@ namespace AKun
             model.localRotation = FlipZ(new Quaternion(q[0], q[1], q[2], q[3]).normalized);
             model.localScale = new Vector3(s[0], s[1], s[2]);
 
+            // Gaussian Splat (置き方は GLB と同じ model の下なので、上の transform がそのまま効く)
+            if (!string.IsNullOrEmpty(splatUrl)) await LoadSplat(mapId, ResolveStreamingAssets(splatUrl));
+
             // レイで隠す場所を指せるように、マップのメッシュに当たり判定を付ける
             Bounds? b = null;
             foreach (var mf in model.GetComponentsInChildren<MeshFilter>())
@@ -100,6 +114,18 @@ namespace AKun
                 foreach (var corner in Corners(mf.sharedMesh.bounds))
                 {
                     var lp = root.InverseTransformPoint(mf.transform.TransformPoint(corner));
+                    if (b == null) b = new Bounds(lp, Vector3.zero);
+                    else { var bb = b.Value; bb.Encapsulate(lp); b = bb; }
+                }
+            }
+            if (splat != null)
+            {
+                // SPZ の範囲 (外れ値を除いた点の範囲) を、root から見た範囲にして足す
+                var sb = splatProxy != null ? splatProxy.Bounds : splat.localBounds;
+                var toRoot = Matrix4x4.TRS(model.localPosition, model.localRotation, model.localScale);
+                foreach (var corner in Corners(sb))
+                {
+                    var lp = toRoot.MultiplyPoint3x4(corner);
                     if (b == null) b = new Bounds(lp, Vector3.zero);
                     else { var bb = b.Value; bb.Encapsulate(lp); b = bb; }
                 }
@@ -115,6 +141,8 @@ namespace AKun
             IsLoaded = false;
             LoadedId = null;
             colliders.Clear();
+            splat = null; // GameObject は下で model の子として消える
+            splatProxy = null;
             for (int i = model.childCount - 1; i >= 0; i--)
             {
                 var child = model.GetChild(i).gameObject;
@@ -125,6 +153,84 @@ namespace AKun
             model.localRotation = Quaternion.identity;
             model.localScale = Vector3.one;
             ClearSpot();
+        }
+
+        // ---------- Gaussian Splat ----------
+
+        // SPZ を端末に落としてから読み込む。GaussianSplatRenderer は無効にすると GPU のデータを捨て、有効にするとまた読み込むので、
+        // 隠す場所を選ぶたびに (マップの表示を切り替えるたびに) 通信しなくて済むよう、読み込み元は端末内のファイルにする。
+        async Task LoadSplat(string mapId, string url)
+        {
+            string path = await DownloadSplat(mapId, url);
+            var go = new GameObject("MapSplat");
+            go.SetActive(false);
+            go.transform.SetParent(model, false);
+            var r = go.AddComponent<GaussianSplatRenderer>();
+            r.m_SourcePath = path;
+            r.m_OpacityScale = 0f; // 読み込みが終わってから、表示を切り替えるまでは出さない
+            splat = r;
+
+            // GaussianSplatRenderer は有効な間にしか読み込まないので、マップが隠れていても、読み込む間だけ root を有効にする
+            bool rootWas = root.gameObject.activeSelf;
+            root.gameObject.SetActive(true);
+            go.SetActive(true);
+            try
+            {
+                while (r != null && r.isLoading) await Task.Yield();
+                if (r == null) throw new Exception("マップが替わりました");
+                if (r.loadError != null) throw new Exception($"SPZ を読めません: {r.loadError}");
+                Debug.Log($"[clay] SPZ を読み込んだ {mapId} 点={r.splatCount} 範囲 中心={r.localBounds.center} 大きさ={r.localBounds.size}");
+
+                // 隠す場所を指すレイを当てるため、点の座標を取り出して粗い格子にする
+                var xyz = ReadSplatPositions(r);
+                splatProxy = xyz != null ? SplatProxy.Build(xyz) : null;
+                if (splatProxy == null) Debug.LogWarning("[clay] SPZ の点を取り出せないので、隠す場所はマップの範囲の箱に当てます");
+            }
+            finally
+            {
+                if (r != null) r.m_OpacityScale = 1f;
+                if (!rootWas) root.gameObject.SetActive(false); // 無効になると GPU のデータを捨てる。表示するときにまた読み込む
+            }
+            if (splatProxy == null)
+            {
+                var box = go.AddComponent<BoxCollider>();
+                box.center = r.localBounds.center;
+                box.size = r.localBounds.size;
+                colliders.Add(box);
+            }
+        }
+
+        static async Task<string> DownloadSplat(string mapId, string url)
+        {
+            string dir = Path.Combine(Application.temporaryCachePath, "splat");
+            Directory.CreateDirectory(dir);
+            string path = Path.Combine(dir, $"{mapId}.spz");
+            using var req = UnityWebRequest.Get(url);
+            req.downloadHandler = new DownloadHandlerFile(path) { removeFileOnAbort = true };
+            var op = req.SendWebRequest();
+            while (!op.isDone) await Task.Yield();
+            if (req.result != UnityWebRequest.Result.Success) throw new Exception($"SPZ を取得できません: {url} ({req.error})");
+            return path;
+        }
+
+        // 点の座標 (float3) は GPU のバッファにだけあり、パッケージの外からは取れないので、型の中の欄を名前で引く (Assets/link.xml で残している)
+        static float[] ReadSplatPositions(GaussianSplatRenderer r)
+        {
+            try
+            {
+                var field = typeof(GaussianSplatRenderer).GetField("m_GpuPosData", BindingFlags.NonPublic | BindingFlags.Instance);
+                if (!(field?.GetValue(r) is GraphicsBuffer buf) || buf.count < 3) return null;
+                var raw = new uint[buf.count];
+                buf.GetData(raw);
+                var xyz = new float[raw.Length];
+                Buffer.BlockCopy(raw, 0, xyz, 0, raw.Length * sizeof(float));
+                return xyz;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[clay] SPZ の点を読めません: {e.Message}");
+                return null;
+            }
         }
 
         // 相対パスは StreamingAssets の中、絶対 URL はそのまま (MapService.ResolveStreamingAssets と同じ)
@@ -201,6 +307,17 @@ namespace AKun
                 if (c == null || !c.Raycast(ray, out var h, maxDistance) || h.distance >= best) continue;
                 best = h.distance;
                 hit = new RayHit { point = h.point, normal = h.normal, distance = h.distance };
+            }
+            // Gaussian Splat: 点から作った格子に、Splat のローカルでレイを当てる
+            if (splat != null && splatProxy != null)
+            {
+                var tr = splat.transform;
+                var d = dir.normalized;
+                if (splatProxy.Raycast(tr.InverseTransformPoint(origin), tr.InverseTransformVector(d), maxDistance, out float t, out var n) && t < best)
+                {
+                    best = t;
+                    hit = new RayHit { point = origin + d * t, normal = tr.TransformDirection(n).normalized, distance = t };
+                }
             }
             return best < float.PositiveInfinity;
         }
