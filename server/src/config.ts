@@ -13,6 +13,8 @@ export type Config = {
   publicUrl: string;
   /** S3 互換ストレージ。S3_* がそろっていなければ undefined（アップロードURL発行は 503） */
   s3?: S3Config;
+  /** GLB をサーバーのディスクに置く場合の保存先。S3_* が優先される */
+  assetDir?: string;
 };
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -45,6 +47,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     pgliteDir: env.PGLITE_DIR || undefined,
     jwtSecret,
     s3: loadS3Config(env),
+    assetDir: env.ASSET_DIR || undefined,
   };
 }
 

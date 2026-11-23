@@ -27,6 +27,7 @@ import { Connections } from "../game/connections.ts";
 import { publishObjectEvent, toWireObject } from "../game/objects.ts";
 import type { AssetStorage } from "../storage.ts";
 import { GameRegistry, type GameState, type PlayerState } from "../game/registry.ts";
+import { isLocalAssetStorage, registerLocalAssetRoutes } from "./assetFiles.ts";
 import { ApiError } from "./errors.ts";
 
 /** 仕様書 9章: 署名付きアップロードURLには短い期限を設ける */
@@ -359,6 +360,8 @@ export function registerRoutes(app: OpenAPIHono, deps: ApiDeps) {
       return c.json({ assetKey, uploadUrl }, 201);
     },
   );
+
+  if (isLocalAssetStorage(deps.assetStorage)) registerLocalAssetRoutes(app, deps.assetStorage);
 
   app.doc31("/v1/openapi.json", {
     openapi: "3.1.0",

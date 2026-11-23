@@ -42,3 +42,13 @@ describe("S3 設定", () => {
     expect(loadConfig(env).s3?.bucket).toBe("b");
   });
 });
+
+describe("ASSET_DIR 設定", () => {
+  test("ASSET_DIR があれば assetDir に入る", () => {
+    expect(loadConfig({ JWT_SECRET: "x", ASSET_DIR: "/data/assets" }).assetDir).toBe("/data/assets");
+  });
+
+  test("ASSET_DIR が無ければ undefined", () => {
+    expect(loadConfig({ JWT_SECRET: "x" }).assetDir).toBeUndefined();
+  });
+});

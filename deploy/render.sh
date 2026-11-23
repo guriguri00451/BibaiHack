@@ -53,9 +53,12 @@ YAML
       PUBLIC_URL: https://$PUBLIC_HOST
       DATABASE_URL: postgres://bibai:\${POSTGRES_PASSWORD:?}@postgres:5432/$(db_name "$e")
       JWT_SECRET: \${$(secret_var "$e"):?}
+    volumes:
+      - assets-$e:/data/assets
 YAML
   done
   printf '\nvolumes:\n  pgdata:\n'
+  for e in $(envs); do printf '  assets-%s:\n' "$e"; done
 } >"$compose"
 
 {

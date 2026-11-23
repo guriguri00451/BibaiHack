@@ -1,7 +1,7 @@
 import { loadConfig } from "./config.ts";
 import { openDb } from "./db/client.ts";
 import { createServer } from "./server.ts";
-import { createS3Storage } from "./storage.ts";
+import { createLocalStorage, createS3Storage } from "./storage.ts";
 
 const config = loadConfig();
 const { db } = await openDb(config);
@@ -10,7 +10,11 @@ const { fetch, websocket } = createServer({
   jwtSecret: config.jwtSecret,
   basePath: config.basePath,
   publicUrl: config.publicUrl,
-  assetStorage: config.s3 && createS3Storage(config.s3),
+  assetStorage: config.s3
+    ? createS3Storage(config.s3)
+    : config.assetDir
+      ? createLocalStorage({ dir: config.assetDir, publicUrl: config.publicUrl, secret: config.jwtSecret })
+      : undefined,
 });
 
 const server = Bun.serve({ port: config.port, fetch, websocket });

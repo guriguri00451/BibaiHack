@@ -41,6 +41,8 @@ services:
       PUBLIC_URL: https://bibai.t0waxx.com
       DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_prod
       JWT_SECRET: ${JWT_SECRET_PROD:?}
+    volumes:
+      - assets-prod:/data/assets
 
   server-stg:
     <<: *server
@@ -52,6 +54,8 @@ services:
       PUBLIC_URL: https://bibai.t0waxx.com
       DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_stg
       JWT_SECRET: ${JWT_SECRET_STG:?}
+    volumes:
+      - assets-stg:/data/assets
 
   server-dev:
     <<: *server
@@ -63,6 +67,8 @@ services:
       PUBLIC_URL: https://bibai.t0waxx.com
       DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_dev
       JWT_SECRET: ${JWT_SECRET_DEV:?}
+    volumes:
+      - assets-dev:/data/assets
 
   server-a-kun-01:
     <<: *server
@@ -74,6 +80,8 @@ services:
       PUBLIC_URL: https://bibai.t0waxx.com
       DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_a_kun_01
       JWT_SECRET: ${JWT_SECRET_A_KUN_01:?}
+    volumes:
+      - assets-a-kun-01:/data/assets
 
   server-a-kun-02:
     <<: *server
@@ -85,6 +93,8 @@ services:
       PUBLIC_URL: https://bibai.t0waxx.com
       DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_a_kun_02
       JWT_SECRET: ${JWT_SECRET_A_KUN_02:?}
+    volumes:
+      - assets-a-kun-02:/data/assets
 
   server-a-kun-03:
     <<: *server
@@ -96,6 +106,8 @@ services:
       PUBLIC_URL: https://bibai.t0waxx.com
       DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_a_kun_03
       JWT_SECRET: ${JWT_SECRET_A_KUN_03:?}
+    volumes:
+      - assets-a-kun-03:/data/assets
 
   server-so-ma-01:
     <<: *server
@@ -107,6 +119,8 @@ services:
       PUBLIC_URL: https://bibai.t0waxx.com
       DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_so_ma_01
       JWT_SECRET: ${JWT_SECRET_SO_MA_01:?}
+    volumes:
+      - assets-so-ma-01:/data/assets
 
   server-so-ma-02:
     <<: *server
@@ -118,6 +132,8 @@ services:
       PUBLIC_URL: https://bibai.t0waxx.com
       DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_so_ma_02
       JWT_SECRET: ${JWT_SECRET_SO_MA_02:?}
+    volumes:
+      - assets-so-ma-02:/data/assets
 
   server-so-ma-03:
     <<: *server
@@ -129,6 +145,17 @@ services:
       PUBLIC_URL: https://bibai.t0waxx.com
       DATABASE_URL: postgres://bibai:${POSTGRES_PASSWORD:?}@postgres:5432/env_so_ma_03
       JWT_SECRET: ${JWT_SECRET_SO_MA_03:?}
+    volumes:
+      - assets-so-ma-03:/data/assets
 
 volumes:
   pgdata:
+  assets-prod:
+  assets-stg:
+  assets-dev:
+  assets-a-kun-01:
+  assets-a-kun-02:
+  assets-a-kun-03:
+  assets-so-ma-01:
+  assets-so-ma-02:
+  assets-so-ma-03:
