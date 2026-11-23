@@ -23,6 +23,8 @@ namespace Seeker.Sync
         public event Action Rejected;
 
         public GameSessionState Session => session;
+        /// <summary>Configure 前は null。REST（捕獲など）の送信先と認証に使う。</summary>
+        public SyncConnection Connection { get; private set; }
         public ServerClock Clock => clock;
 
         /// <summary>フェーズ・ラウンド・参加者・結果のいずれかが変わったとき。</summary>
@@ -36,6 +38,7 @@ namespace Seeker.Sync
         {
             if (client != null) throw new System.InvalidOperationException("SyncedObjectsController はすでに接続済み");
             adapter = coordinateAdapter;
+            Connection = connection;
             glbCache = new GlbCache();
             client = new SeekerWsClient(connection);
             client.MessageReceived += OnMessage;
@@ -110,6 +113,7 @@ namespace Seeker.Sync
         private void CreateView(SyncChange change)
         {
             var view = new GameObject($"Synced_{change.objectId}").AddComponent<SyncedObjectView>();
+            view.ObjectId = change.objectId;
             view.SetTarget(change.transform);
             views[change.objectId] = view;
             LoadModel(view, change.assetKey, change.assetUrl);
