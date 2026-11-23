@@ -1,13 +1,22 @@
 import { openDb } from "../src/db/client.ts";
-import type { AssetStorage } from "../src/storage.ts";
 import { createServer } from "../src/server.ts";
+import type { AssetStorage } from "../src/storage/assets.ts";
+import type { ObjectStorage } from "../src/storage/storage.ts";
 
 export const JWT_SECRET = "test-secret";
 
 /** PGlite 上でサーバーを起動する。テストファイルの先頭で await し、afterAll で stop を呼ぶ */
-export async function startServer(opts: { basePath?: string; assetStorage?: AssetStorage } = {}) {
+export async function startServer(
+  opts: { basePath?: string; storage?: ObjectStorage; assetStorage?: AssetStorage } = {},
+) {
   const { db, close } = await openDb({});
-  const srv = createServer({ db, jwtSecret: JWT_SECRET, basePath: opts.basePath, assetStorage: opts.assetStorage });
+  const srv = createServer({
+    db,
+    jwtSecret: JWT_SECRET,
+    basePath: opts.basePath,
+    storage: opts.storage,
+    assetStorage: opts.assetStorage,
+  });
   const server = Bun.serve({ port: 0, fetch: srv.fetch, websocket: srv.websocket });
   const base = `http://localhost:${server.port}${opts.basePath ?? ""}`;
 
@@ -20,9 +29,8 @@ export async function startServer(opts: { basePath?: string; assetStorage?: Asse
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    // 204 など本文の無い応答もある
     const text = await res.text();
-    return { status: res.status, body: (text ? JSON.parse(text) : undefined) as any };
+    return { status: res.status, headers: res.headers, body: (text ? JSON.parse(text) : null) as any };
   }
   const post = async (path: string, body: unknown, token?: string) =>
     (await request("POST", path, body, token)).body;
@@ -77,19 +85,47 @@ export async function startServer(opts: { basePath?: string; assetStorage?: Asse
 
   const guest = (name: string) => post("/v1/guests", { name });
 
+  /** 署名付き URL を取り、GLB を PUT して assetKey を返す */
+  async function uploadGlb(token: string, sessionId: string, bytes: Uint8Array = fakeGlb()) {
+    const r = await request(
+      "POST",
+      "/v1/assets/uploads",
+      { sessionId, contentType: "model/gltf-binary", sizeBytes: bytes.byteLength },
+      token,
+    );
+    if (r.status !== 201) throw new Error(`uploads: ${r.status} ${JSON.stringify(r.body)}`);
+    const put = await fetch(r.body.uploadUrl, {
+      method: "PUT",
+      headers: { "content-type": "model/gltf-binary" },
+      body: bytes,
+    });
+    if (put.status !== 201) throw new Error(`PUT: ${put.status} ${await put.text()}`);
+    return r.body.assetKey as string;
+  }
+
   return {
     db,
+    srv,
     base,
     request,
     post,
     connect,
     authed,
     guest,
+    uploadGlb,
     async stop() {
+      await srv.dispose();
       server.stop(true);
       await close();
     },
   };
+}
+
+/** 先頭が "glTF" の、中身は空の GLB もどき（サーバーは先頭と大きさだけ見る） */
+export function fakeGlb(size = 64): Uint8Array {
+  const b = new Uint8Array(size);
+  b.set([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0]);
+  return b;
 }
 
 export const pose = (x: number) => ({

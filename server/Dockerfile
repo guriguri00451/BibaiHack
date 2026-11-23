@@ -4,6 +4,9 @@ COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
 COPY src ./src
 COPY drizzle ./drizzle
+COPY maps ./maps
+# GLB・ログ・Snapshot の置き場。compose で名前付きボリュームを重ねる（初回はこの持ち主で作られる）
+RUN mkdir -p /data/storage && chown bun:bun /data/storage
 ENV NODE_ENV=production PORT=8080
 USER bun
 EXPOSE 8080

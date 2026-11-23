@@ -12,8 +12,11 @@ afterAll(() => t.stop());
 
 const assetKey = (sessionId: string, name = "a") => `sessions/${sessionId}/assets/${name}.glb`;
 
-/** ホスト(hider 扱い)とゲスト(seeker 扱い)のセッションを作る。役割は DB に直接入れる（ラウンド開始 API が無いため） */
-async function setup(status: "waiting" | "preparing" | "playing" | "finished" = "waiting") {
+/**
+ * ホスト(hider)とゲスト(seeker)のセッションを作る。役割とフェーズは DB に直接入れる
+ * （ラウンド開始 API を通した流れは game.test.ts。オブジェクトを置けるのは準備中・本番中だけ）
+ */
+async function setup(status: "waiting" | "preparing" | "playing" | "finished" = "preparing") {
   const host = await t.guest("Hider");
   const guest = await t.guest("Seeker");
   const session = await t.post("/v1/sessions", { mapId: "bibai-museum" }, host.accessToken);
@@ -36,6 +39,7 @@ describe("オブジェクト REST", () => {
     expect(res.status).toBe(201);
     expect(res.body.round).toBe(1);
 
+    // ドロ自身には作成者・擬態先も見せる（ケイに見せない形は WS 配信のテスト）
     const { snapshot } = await t.authed(s.host.accessToken, s.sessionId);
     expect(snapshot.payload.objects).toEqual([
       {
@@ -43,6 +47,8 @@ describe("オブジェクト REST", () => {
         assetKey: assetKey(s.sessionId),
         assetUrl: `https://storage.example.com/${assetKey(s.sessionId)}?get&ttl=3600`,
         transform: pose(1),
+        ownerPlayerId: snapshot.payload.you.playerId,
+        isDisguise: false,
       },
     ]);
   });
@@ -84,7 +90,9 @@ describe("オブジェクト REST", () => {
   test("所有者以外の PATCH は 403、存在しない id は 404", async () => {
     const s = await setup();
     const other = await t.guest("Other");
-    await t.post(`/v1/sessions/${s.sessionId}/join`, {}, other.accessToken);
+    const joined = await t.post(`/v1/sessions/${s.sessionId}/join`, {}, other.accessToken);
+    // 別のドロ（ケイだと所有者を見る前に FORBIDDEN_ROLE になる）
+    await t.db.update(gamePlayers).set({ role: "hider" }).where(eq(gamePlayers.id, joined.playerId));
     const created = await t.post(
       `/v1/sessions/${s.sessionId}/objects`,
       { assetKey: assetKey(s.sessionId), transform: pose(0) },

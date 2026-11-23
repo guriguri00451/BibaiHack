@@ -1,9 +1,21 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
+import type { Db } from "../db/client.ts";
+import { RateLimitError } from "../game/service.ts";
+import { buildServices, type Services } from "../services.ts";
 import { ApiError, errorBody } from "./errors.ts";
-import { type ApiDeps, registerRoutes } from "./routes.ts";
+import { registerRoutes } from "./routes.ts";
 
-export function createApp(deps?: ApiDeps) {
+export type AppDeps = {
+  db: Db;
+  jwtSecret: string;
+  publicUrl?: string;
+  assetBaseUrl?: string;
+  basePath?: string;
+} & Partial<Services>;
+
+/** deps が無ければ /healthz だけの app（テスト用）。サービスが無ければここで作る */
+export function createApp(deps?: AppDeps) {
   const app = new OpenAPIHono({
     // zod の検証に失敗したリクエストは、仕様書の形式で 400 を返す
     defaultHook: (result, c) => {
@@ -17,6 +29,7 @@ export function createApp(deps?: ApiDeps) {
   });
 
   app.onError((err, c) => {
+    if (err instanceof RateLimitError) c.header("retry-after", String(Math.ceil(err.retryAfterMs / 1000)));
     if (err instanceof ApiError) return c.json(err.body, err.status);
     // Hono 自身が投げる 4xx（壊れた JSON など）は、そのステータスのまま仕様書の形式で返す
     if (err instanceof HTTPException && err.status < 500) {
@@ -29,7 +42,10 @@ export function createApp(deps?: ApiDeps) {
   app.notFound((c) => c.json(errorBody("NOT_FOUND", "Not found."), 404));
 
   app.get("/healthz", (c) => c.json({ ok: true }));
-  if (deps) registerRoutes(app, deps);
+  if (deps) {
+    const services = deps.game ? (deps as AppDeps & Services) : { ...deps, ...buildServices(deps) };
+    registerRoutes(app, services);
+  }
 
   return app;
 }
