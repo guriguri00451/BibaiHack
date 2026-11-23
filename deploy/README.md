@@ -79,13 +79,13 @@ deploy/db.sh psql dev 'select count(*) from users'
 
 ## ステージ（ゾーンの SPZ）
 
-美唄のゾーン（`bibai-zone-a`〜`h`・`rest`）は全環境に登録してある。URL・登録し直し方は [`docs/stage-zones.md`](../docs/stage-zones.md)。
+美唄のゾーン（元の解像度の `bibai-zone-a`〜`h`・`rest` と、1/2 の `*-half` 12個）は全環境に登録してある。登録するものは `deploy/stage-maps.tsv`。URL・登録し直し方は [`docs/stage-zones.md`](../docs/stage-zones.md)。
 
 ```bash
 deploy/zones.sh list so-ma-01                # その環境のゾーンと URL
 deploy/zones.sh register so-ma-01            # 1つの環境に登録（登録済みは飛ばす）
 deploy/zones.sh register all --yes-prod      # 全環境
-deploy/zones.sh push <ディレクトリ>           # ゾーンを作り直したら先に VM へ送る
+deploy/zones.sh push <ディレクトリ> <置き場>   # SPZ を VM の /opt/bibai/incoming/<置き場>/ へ送る
 ```
 
 ## 環境を増やす・減らす
@@ -108,7 +108,9 @@ deploy/zones.sh push <ディレクトリ>           # ゾーンを作り直し�
   .env                       POSTGRES_PASSWORD・JWT_SECRET_*・ADMIN_TOKEN（VM 上でだけ生成。mode 600）
   envs/<環境>/server/          デプロイしたソース
   envs/<環境>/DEPLOYED         入っているブランチ・コミット・日時・実行者
-  incoming/zones_wide/       ゾーンの SPZ と zones.json（deploy/zones.sh push で送る。登録の元）
+  incoming/zones_wide/       元の解像度のゾーンの SPZ（deploy/zones.sh push で送る。登録の元）
+  incoming/half/             1/2 のゾーンの SPZ
+  incoming/stage-maps.tsv    登録の一覧と処理（register のたびに送り直す）
 ```
 
 管理画面（`https://bibai.t0waxx.com/<環境>/admin`、prod は `/admin`）のトークンは全環境で共通の `ADMIN_TOKEN`。見るには `ssh -J root@wds-pve towa@192.168.11.2 grep ADMIN_TOKEN /opt/bibai/.env`。

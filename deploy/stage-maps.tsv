@@ -1,0 +1,27 @@
+# ステージのマップ（Gaussian Splat の SPZ）。deploy/zones.sh register が全行を各環境に登録する。
+# 列はタブ区切り: mapId / VM の /opt/bibai/incoming からの SPZ のパス / 名前
+# 置き方（transform）は全行共通で zones.sh の STAGE_TRANSFORM（天地を直す X 軸まわり 180°）
+#
+# 元の解像度（wds-pc-029 の ~/bibai-editor/zones_wide/）
+bibai-zone-a	zones_wide/A.spz	美唄 西側（A）
+bibai-zone-b	zones_wide/B.spz	美唄 南西側（B）
+bibai-zone-c	zones_wide/C.spz	美唄 北西側（C）
+bibai-zone-d	zones_wide/D.spz	美唄 中央北側（D）
+bibai-zone-e	zones_wide/E.spz	美唄 北東側（E）
+bibai-zone-f	zones_wide/F.spz	美唄 東側（F）
+bibai-zone-g	zones_wide/G.spz	美唄 南東側（G）
+bibai-zone-h	zones_wide/H.spz	美唄 中央小室（H）
+bibai-zone-rest	zones_wide/rest.spz	美唄 その他（rest）
+# 点を半分・SH 1次にしたもの（wds-pgx の http://wds-pgx:8780/datasets/bibai/。KaguyaAR と同じもの）
+bibai-all-half	half/export-bibai-v1_half.spz	美唄 全体（1/2）
+bibai-west-half	half/zones3-W_half.spz	美唄 西 A+B+C（1/2）
+bibai-center-half	half/zones3-C_half.spz	美唄 中央 D+G+H（1/2）
+bibai-east-half	half/zones3-E_half.spz	美唄 東 E+F（1/2）
+bibai-zone-a-half	half/zones_wide-A_half.spz	美唄 西側（A・1/2）
+bibai-zone-b-half	half/zones_wide-B_half.spz	美唄 南西側（B・1/2）
+bibai-zone-c-half	half/zones_wide-C_half.spz	美唄 北西側（C・1/2）
+bibai-zone-d-half	half/zones_wide-D_half.spz	美唄 中央北側（D・1/2）
+bibai-zone-e-half	half/zones_wide-E_half.spz	美唄 北東側（E・1/2）
+bibai-zone-f-half	half/zones_wide-F_half.spz	美唄 東側（F・1/2）
+bibai-zone-g-half	half/zones_wide-G_half.spz	美唄 南東側（G・1/2）
+bibai-zone-h-half	half/zones_wide-H_half.spz	美唄 中央小室（H・1/2）
