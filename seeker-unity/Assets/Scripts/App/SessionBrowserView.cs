@@ -10,7 +10,7 @@ using UnityEngine.UI;
 namespace Seeker.App
 {
     /// <summary>
-    /// 接続先と名前を入れ、GET /v1/sessions の一覧から選んで参加する画面（サーバーブラウザ）。
+    /// 名前を入れ、本番環境（<see cref="ProductionServer"/>）の GET /v1/admin/sessions の一覧から選んで参加する画面（サーバーブラウザ）。
     /// 参加できたら <see cref="Joined"/> に SyncConnection を渡して自分は閉じる。
     /// 判定・保存は Seeker.Sync.Lobby の純 C# に任せ、ここは uGUI の組み立てと呼び出しだけ。
     /// </summary>
@@ -24,14 +24,11 @@ namespace Seeker.App
         public event Action<SyncConnection> Joined;
 
         private LobbySettings settings;
-        private InputField baseUrlField;
         private InputField nameField;
         private Text messageLabel;
         private RectTransform listContent;
         private readonly List<GameObject> rows = new List<GameObject>();
         private bool isBusy;
-        // 一覧を取った時の接続先。入力欄を書き換えても、参加はこの接続先で行う（トークンもこの接続先のもの）
-        private string listedBaseUrl;
         private GuestTokenProvider tokens;
         private LobbyClient client;
 
@@ -40,9 +37,8 @@ namespace Seeker.App
             settings = new LobbySettings(new PlayerPrefsStore());
             EnsureEventSystem();
             BuildUi();
-            baseUrlField.text = settings.BaseUrl;
             nameField.text = settings.PlayerName;
-            ShowMessage("接続先と名前を入れて「一覧を取得」");
+            ShowMessage("名前を入れて「一覧を取得」");
         }
 
         // シーンに EventSystem が無いとボタン・入力欄が反応しない。Input System のみの設定なので専用モジュールを使う
@@ -55,27 +51,21 @@ namespace Seeker.App
         private async void FetchSessions()
         {
             if (isBusy) return;
-            if (!LobbySettings.TryNormalizeBaseUrl(baseUrlField.text, out var baseUrl))
-            {
-                ShowMessage("接続先は https:// で始まる URL を入れてください");
-                return;
-            }
             if (!LobbySettings.TryNormalizePlayerName(nameField.text, out var playerName))
             {
                 ShowMessage($"名前は 1〜{LobbySettings.MaxPlayerNameLength} 文字で入れてください");
                 return;
             }
-            settings.BaseUrl = baseUrl;
+            const string baseUrl = ProductionServer.BaseUrl;
             settings.PlayerName = playerName;
             client = new LobbyClient(baseUrl);
             tokens = new GuestTokenProvider(settings, baseUrl, () => client.CreateGuestAsync(playerName));
-            listedBaseUrl = baseUrl;
 
             isBusy = true;
             ShowMessage("一覧を取得中…");
             try
             {
-                var sessions = await tokens.RunAsync(token => client.ListSessionsAsync(token));
+                var sessions = await client.ListSessionsAsync(ProductionServer.AdminToken);
                 if (this == null) return;
                 RenderSessions(sessions);
                 ShowMessage(sessions.Count == 0 ? "参加できるセッションがありません（ホストの作成を待って更新）" : "参加するセッションを選んでください");
@@ -99,7 +89,7 @@ namespace Seeker.App
             {
                 await tokens.RunAsync(token => client.JoinAsync(token, session.Id));
                 if (this == null) return;
-                var connection = SyncConnection.FromBaseUrl(listedBaseUrl, session.Id, tokens.CurrentToken);
+                var connection = SyncConnection.FromBaseUrl(ProductionServer.BaseUrl, session.Id, tokens.CurrentToken);
                 gameObject.SetActive(false);
                 Joined?.Invoke(connection);
             }
@@ -163,8 +153,6 @@ namespace Seeker.App
             layout.childForceExpandHeight = false;
 
             CreateLabel(root, "セッションを選ぶ", 64, 100f);
-            CreateLabel(root, "接続先", 40, 50f);
-            baseUrlField = CreateInputField(root, "https://example.com/env", InputField.ContentType.Standard);
             CreateLabel(root, "名前", 40, 50f);
             nameField = CreateInputField(root, "Player", InputField.ContentType.Standard);
             nameField.characterLimit = LobbySettings.MaxPlayerNameLength;

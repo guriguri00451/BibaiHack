@@ -7,8 +7,8 @@ using Newtonsoft.Json.Linq;
 namespace Seeker.Sync.Lobby
 {
     /// <summary>
-    /// GET /v1/sessions の1件。形は server/src/contracts/rest.ts の SessionSummary が正。
-    /// 参加前に見せる情報だけで、役割・スコアは来ない。
+    /// GET /v1/admin/sessions の1件から、参加前に見せる情報だけを抜いたもの。
+    /// 管理 API の形は server/src/game/service.ts の adminSessions が正（OpenAPI に載っていない）。
     /// </summary>
     public sealed class SessionSummary
     {
@@ -70,15 +70,22 @@ namespace Seeker.Sync.Lobby
                 .ToList();
         }
 
-        private static SessionSummary ReadOne(JObject json) => new SessionSummary(
-            (string)json["id"],
-            (string)json["status"],
-            (int?)json["round"] ?? 1,
-            (string)json["mapId"] ?? "",
-            (string)json["hostName"] ?? "",
-            (int?)json["playerCount"] ?? 0,
-            (int?)json["connectedCount"] ?? 0,
-            ReadTime(json["createdAt"]));
+        // 管理 API はホスト名・人数を直接返さないので players[] から数える
+        private static SessionSummary ReadOne(JObject json)
+        {
+            var players = (json["players"] as JArray)?.OfType<JObject>().ToList() ?? new List<JObject>();
+            var hostUserId = (string)json["hostUserId"];
+            var host = players.FirstOrDefault(p => hostUserId != null && (string)p["userId"] == hostUserId);
+            return new SessionSummary(
+                (string)json["id"],
+                (string)json["status"],
+                (int?)json["round"] ?? 1,
+                (string)json["mapId"] ?? "",
+                (string)host?["name"] ?? "",
+                players.Count,
+                players.Count(p => (bool?)p["connected"] ?? false),
+                ReadTime(json["createdAt"]));
+        }
 
         // Newtonsoft は ISO 文字列を勝手に DateTime にすることがあるので、どちらで来ても読む
         private static DateTimeOffset ReadTime(JToken token)

@@ -18,7 +18,8 @@ namespace Seeker.Ar.Tests
         }
 
         private static string Session(string id, string createdAt) =>
-            $"{{\"id\":\"{id}\",\"status\":\"waiting\",\"round\":1,\"mapId\":\"m\",\"hostName\":\"H\",\"playerCount\":2,\"connectedCount\":1,\"phaseEndsAt\":null,\"createdAt\":\"{createdAt}\"}}";
+            $"{{\"id\":\"{id}\",\"hostUserId\":\"u1\",\"status\":\"waiting\",\"round\":1,\"mapId\":\"m\",\"phaseEndsAt\":null,\"createdAt\":\"{createdAt}\"," +
+            "\"players\":[{\"id\":\"p1\",\"userId\":\"u1\",\"name\":\"H\",\"connected\":true},{\"id\":\"p2\",\"userId\":\"u2\",\"name\":\"G\",\"connected\":false}]}";
 
         // ---------- 一覧 ----------
 
