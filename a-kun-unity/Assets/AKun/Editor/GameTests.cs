@@ -84,6 +84,13 @@ namespace AKun.EditorTools
                 ""you"":{""playerId"":""p1"",""role"":""seeker""},""players"":[]}}"));
             Check(g.round == 3 && g.status == "preparing" && g.myRole == "seeker" && g.HideBlockReason() == "このラウンドはケイです", "ケイの番は投稿できない");
 
+            // ---- ステージの一覧 (GET /v1/maps) ----
+            var stages = ServerTarget.ParseMaps(J(@"{""maps"":[{""mapId"":""bibai-museum"",""name"":""美唄(モック)"",""modelUrl"":""https://x/v1/maps/bibai-museum/model.glb""},
+                {""mapId"":""park"",""name"":""""},{""name"":""idなし""},{""mapId"":""""}]}"));
+            Check(stages.Count == 2 && stages[0].id == "bibai-museum" && stages[0].name == "美唄(モック)", $"ステージの一覧を読む ({stages.Count} 件。ID の無いものは外す)");
+            Check(stages.Count == 2 && stages[1].id == "park" && stages[1].name == "park", "名前が空なら ID を名前にする");
+            Check(ServerTarget.ParseMaps(null).Count == 0 && ServerTarget.ParseMaps(J("{}")).Count == 0, "一覧が無い応答は空");
+
             Debug.Log(fails == 0 ? "[test] ALL OK" : $"[test] {fails} FAILED");
             if (Application.isBatchMode) EditorApplication.Exit(fails == 0 ? 0 : 1);
         }
@@ -140,6 +147,17 @@ namespace AKun.EditorTools
                 Check(seeker.game.mapId == g.mapId, $"ケイ側にもマップが届く ({seeker.game.mapId})");
             }
             else Debug.Log("[test] マップが 1 つしか無いので、マップの切り替えは確かめません");
+
+            // 選んだステージのモデルを取ってくる (マップ定義 → GLB)。隠す場所は、この取れたモデルの中で選ぶ
+            Check(host.maps.Exists(m => m.id == g.mapId), $"選んだステージは一覧にある ({g.mapId})");
+            var mv = new MapView(null);
+            try
+            {
+                await mv.Load(g.mapId, host.apiBase, host.Token);
+                Check(mv.IsLoaded && mv.LoadedId == g.mapId && mv.LocalBounds.size.sqrMagnitude > 1e-6f, $"ステージのモデルを取得できる ({mv.Name}, 大きさ {mv.LocalBounds.size})");
+                Check(mv.root.GetComponentsInChildren<MeshCollider>(true).Length > 0, "そのモデルに当たり判定が付く (レイで隠す場所を指せる)");
+            }
+            finally { UnityEngine.Object.DestroyImmediate(mv.root.gameObject); }
 
             await host.StartRound();
             Check(g.status == GameState.PREPARING && g.IsHider && g.CanHide, $"準備中・ドロ (localPhase={g.localPhase})");

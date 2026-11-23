@@ -106,6 +106,7 @@ namespace AKun
         // 選べるマップ (GET /v1/maps)。ホストは待機中とラウンドの終わった後に替えられる
         public readonly List<MapEntry> maps = new List<MapEntry>();
         public bool MapBusy { get; private set; }
+        public bool MapsLoading { get; private set; } // 一覧をサーバーから取っている間
         public struct MapEntry { public string id, name; }
 
         readonly Action<string> log;
@@ -347,21 +348,39 @@ namespace AKun
 
         // ---------- マップ ----------
 
-        // GET /v1/maps。無ければ (古いサーバー) 今のマップだけ
-        public async Task LoadMaps()
+        // GET /v1/maps (選べるステージの一覧)。取れたときだけ一覧を入れ替える (取れなければ前の一覧を残す)。
+        // ステージを選ぶ画面を開くたびに呼んで、管理画面で足したステージもすぐ出す
+        public async Task<bool> LoadMaps()
         {
-            var r = await Api("GET", "/maps", null);
-            maps.Clear();
-            if (r.Ok && r.json != null && r.json.TryGetValue("maps", out var mv) && mv is List<object> list)
+            MapsLoading = true;
+            try
             {
-                foreach (var o in list)
+                var r = await Api("GET", "/maps", null);
+                if (r.Ok && r.json != null)
                 {
-                    if (!(o is Dictionary<string, object> m) || m.Str("mapId") == null) continue;
-                    maps.Add(new MapEntry { id = m.Str("mapId"), name = m.Str("name") ?? m.Str("mapId") });
+                    var list = ParseMaps(r.json);
+                    maps.Clear();
+                    maps.AddRange(list);
+                    return true;
                 }
+                if (r.notImplemented) Warn("GET /maps", "GET /maps が無いので、ステージは選べません");
+                else Debug.LogWarning($"[game] ステージの一覧を取れません: {r.error}");
+                return false;
             }
-            else if (r.notImplemented) Warn("GET /maps", "GET /maps が無いので、マップは選べません");
-            else Debug.LogWarning($"[game] マップの一覧を取れません: {r.error}");
+            finally { MapsLoading = false; }
+        }
+
+        // GET /v1/maps の応答 {"maps":[{"mapId","name","modelUrl"}]} から、選べるステージの一覧を作る
+        public static List<MapEntry> ParseMaps(Dictionary<string, object> json)
+        {
+            var list = new List<MapEntry>();
+            if (json == null || !json.TryGetValue("maps", out var mv) || !(mv is List<object> items)) return list;
+            foreach (var o in items)
+            {
+                if (!(o is Dictionary<string, object> m) || string.IsNullOrEmpty(m.Str("mapId"))) continue;
+                list.Add(new MapEntry { id = m.Str("mapId"), name = string.IsNullOrEmpty(m.Str("name")) ? m.Str("mapId") : m.Str("name") });
+            }
+            return list;
         }
 
         public string MapName(string id)
@@ -370,22 +389,30 @@ namespace AKun
             return id ?? "";
         }
 
+        // ホストは、待機中とラウンドの終わった後だけステージを替えられる (サーバーもそれ以外は 409 にする)
         public bool CanChangeMap => game.IsHost && !MapBusy && !PhaseBusy && Sid != null
             && (game.status == GameState.WAITING || game.status == GameState.FINISHED) && maps.Count > 1;
 
-        // 一覧の次のマップにする (ホスト)。PUT /v1/sessions/{id}/map。ほかの端末には snapshot で届く
+        // 一覧の次のステージにする (ホスト)
         public async Task NextMap()
         {
             if (!CanChangeMap) return;
             int i = maps.FindIndex(m => m.id == game.mapId);
-            var next = maps[(i + 1) % maps.Count];
+            await SelectMap(maps[(i + 1) % maps.Count].id);
+        }
+
+        // このステージにする (ホスト)。PUT /v1/sessions/{id}/map。ほかの端末には snapshot で届く。替えられたら true
+        public async Task<bool> SelectMap(string mapId)
+        {
+            if (!CanChangeMap || string.IsNullOrEmpty(mapId)) return false;
             MapBusy = true;
             try
             {
-                var r = await Api("PUT", $"/sessions/{Sid}/map", new Dictionary<string, object> { ["mapId"] = next.id });
-                if (r.Ok) { game.ApplySessionDetail(r.json); log($"マップを「{next.name}」にしました"); }
-                else if (r.notImplemented) Warn("PUT /sessions/{id}/map", "PUT /sessions/{id}/map が無いので、マップは替えられません");
-                else log($"[エラー] マップを替えられません ({r.error})");
+                var r = await Api("PUT", $"/sessions/{Sid}/map", new Dictionary<string, object> { ["mapId"] = mapId });
+                if (r.Ok) { game.ApplySessionDetail(r.json); log($"ステージを「{MapName(mapId)}」にしました"); return game.mapId == mapId; }
+                if (r.notImplemented) Warn("PUT /sessions/{id}/map", "PUT /sessions/{id}/map が無いので、ステージは替えられません");
+                else log($"[エラー] ステージを替えられません ({r.error})");
+                return false;
             }
             finally { MapBusy = false; }
         }

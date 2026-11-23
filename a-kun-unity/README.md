@@ -21,6 +21,7 @@
 | `Assets/AKun/Scripts/ButtonPanel.cs` | 空中のボタン・スライダー・色見本。指先で押す / レイで指してつまむ (`a-kun/src/panel.js` の移植) |
 | `Assets/AKun/Scripts/Post.cs` / `Uploader.cs` | 投稿のパネルと投稿先 (この端末内 / ゲームサーバー) (`a-kun/src/post/` の移植) |
 | `Assets/AKun/Scripts/Glb.cs` | GLB の書き出し |
+| `Assets/AKun/Scripts/StagePicker.cs` | ステージを選ぶパネル。サーバーのステージ一覧から選び、そのモデルを取りにいく (隠す場所を選ぶ前の段階) |
 | `Assets/AKun/Scripts/MapView.cs` | 隠す場所を選ぶマップの模型。マップ定義と GLB の読み込み、レイの当たり判定、隠す場所の Transform (seeker-unity の `MapService` / `MapDefinition` / `MapPresenter` をもとにした) |
 | `Assets/StreamingAssets/mock/` | マップのモック (seeker-unity と同じ `bibai-museum`) |
 | `Assets/AKun/Resources/Shaders/` | 粘土 (頂点カラー)、半透明の手、パネルの角丸、文字 |
@@ -96,7 +97,10 @@ adb install -r a-kun-unity/Builds/a-kun-clay.apk
 - 2 回目からは、前に隠した場所を選んだ状態で始まる
 - エディタで再生したときは、マウスでマップを押すとそこに隠す
 
-マップは起動時の設定の `map` (既定は `bibai-museum`) で選び、`Assets/StreamingAssets/mock/<map>.json` を読みます (サーバーにつないでいれば先に `GET /v1/maps/<map>` を試し、無ければこの mock を使う)。
+隠す場所を選ぶ前に、**ステージ (マップ) を選んで、そのモデルを取ってきておく**段階があります (サーバーにつないでいるとき)。「ゲームサーバーにつなぐ」の 1 を見てください。
+「投稿する」は、取ってあるモデルの中で隠す場所を選ぶ画面を出します (モデルをまだ取っている途中なら、終わるまで待つ。取れていなければ、ここでもう一度取りにいく)。
+
+サーバーにつながないときは、起動時の設定の `map` (既定は `bibai-museum`) で選び、`Assets/StreamingAssets/mock/<map>.json` を読みます (サーバーにつないでいても、`GET /v1/maps/<map>` が使えなければこの mock を使う)。
 マップの模型の置き方は `MapView.SetPose(位置, 回転, 倍率)` で外から決められます (マーカーの位置や、保存しておいた置き方など)。
 マップの材質は粘土と同じシェーダーで、glTF の基本色だけを出します (テクスチャはまだ出さない)。
 
@@ -134,7 +138,11 @@ adb shell am start -n com.bibaihack.akunclay/com.unity3d.player.UnityPlayerGameA
 
 つなぐと右にゲームのパネルが出ます (ラウンド・フェーズ・残り時間・役割・参加人数)。流れは仕様書 4 章のとおりです。
 
-1. ホスト (部屋を作った端末) は、ゲームのパネルの「マップ: …▶ 次へ」でマップを選ぶ (サーバーに登録したマップを順に切り替える。参加者全員には snapshot の `session.mapId` で知らされる)。マップはサーバーの管理画面 (`<接続先>/admin`) で登録する
+1. ステージを選ぶ。右のゲームのパネルの「ステージ: … ▶ 選ぶ」を押すと、ステージの一覧のパネルが開く (開くたびに `GET /v1/maps` でサーバーから取り直すので、管理画面で足したステージもすぐ出る。4 件ずつのページ送り)。
+   ホスト (部屋を作った端末) は、待機中とラウンドの終わった後に、一覧から選べる (`PUT /v1/sessions/{id}/map`。参加者全員には snapshot の `session.mapId` で知らされる)。
+   選んだらすぐ、そのステージのモデル (`GET /v1/maps/{mapId}` → GLB) を取りにいく。部屋につないだとき・ほかの端末が替えたときも同じ。
+   取れたかどうかは、パネルの欄 (取得中… / 取得済み / 取得できません) と「今やること」の帯に出る。取れなかったときは、そのステージを押すと取り直せる。
+   ステージはサーバーの管理画面 (`<接続先>/admin`) で登録する
 2. ホストが「準備をはじめる」。この端末がドロ、ほかの全員がケイになる
 3. 準備中と本番の間、ドロは投稿・更新できる。ラウンドの最初の投稿に自動で化ける (「化ける」で切り替え)
 4. 期限が来るとサーバーが次へ進める (「本番をはじめる」「ラウンドを終える」で早めることもできる)。全てのドロが見つかっても終わる
@@ -151,7 +159,7 @@ Unity -batchmode -quit -projectPath a-kun-unity -executeMethod AKun.EditorTools.
 Unity -batchmode -projectPath a-kun-unity -executeMethod AKun.EditorTools.GameTests.RunLive -akunServer https://bibai.t0waxx.com/a-kun-01
 ```
 
-`RunLive` は本物のサーバーで、部屋を作る → もう 1 人が入る → マップを替える (2 つ以上あるとき) → 準備 → 投稿・擬態 → 本番 → 終了 → サーバーが次のラウンドを始める、を一通り回します。
+`RunLive` は本物のサーバーで、部屋を作る → もう 1 人が入る → ステージを替える (2 つ以上あるとき) → 選んだステージのモデルを取る → 準備 → 投稿・擬態 → 本番 → 終了 → サーバーが次のラウンドを始める、を一通り回します。
 
 ## 調整しやすい値 (`ClayApp.cs` の先頭)
 
