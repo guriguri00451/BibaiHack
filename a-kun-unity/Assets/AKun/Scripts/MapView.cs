@@ -27,6 +27,8 @@ namespace AKun
 
         public bool IsLoaded { get; private set; }
         public string Name { get; private set; } = "";
+        // 読み込んだマップの ID (ホストがマップを替えたら読み直す)
+        public string LoadedId { get; private set; }
         // root から見たマップの大きさ (読み込んだ GLB の範囲)
         public Bounds LocalBounds { get; private set; }
 
@@ -67,6 +69,7 @@ namespace AKun
                 : $"{apiBase.TrimEnd('/')}/maps/{UnityWebRequest.EscapeURL(mapId)}";
             string json = await GetText(url, token);
             if (!(MiniJson.Parse(json) is Dictionary<string, object> def)) throw new Exception("マップ定義が JSON ではありません");
+            Clear();
             string modelUrl = def.Str("modelUrl");
             if (string.IsNullOrEmpty(modelUrl)) throw new Exception("マップ定義に modelUrl がありません");
             Name = def.Str("name") ?? mapId;
@@ -102,7 +105,26 @@ namespace AKun
                 }
             }
             LocalBounds = b ?? new Bounds(Vector3.zero, Vector3.one);
+            LoadedId = mapId;
             IsLoaded = true;
+        }
+
+        // 前に読んだマップを外す (別のマップを読み直すとき)
+        void Clear()
+        {
+            IsLoaded = false;
+            LoadedId = null;
+            colliders.Clear();
+            for (int i = model.childCount - 1; i >= 0; i--)
+            {
+                var child = model.GetChild(i).gameObject;
+                if (Application.isPlaying) UnityEngine.Object.Destroy(child);
+                else UnityEngine.Object.DestroyImmediate(child);
+            }
+            model.localPosition = Vector3.zero;
+            model.localRotation = Quaternion.identity;
+            model.localScale = Vector3.one;
+            ClearSpot();
         }
 
         // 相対パスは StreamingAssets の中、絶対 URL はそのまま (MapService.ResolveStreamingAssets と同じ)

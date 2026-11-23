@@ -121,7 +121,7 @@ adb shell am start -n com.bibaihack.akunclay/com.unity3d.player.UnityPlayerGameA
 ```
 
 ```json
-{"server": "https://bibai.t0waxx.com/a-kun-01", "room": "", "name": "a-kun", "prepare": "120", "play": "180"}
+{"server": "https://bibai.t0waxx.com/a-kun-01", "room": "", "name": "a-kun", "prepare": "120", "play": "180", "result": "20"}
 ```
 
 | 項目 | 内容 |
@@ -129,14 +129,16 @@ adb shell am start -n com.bibaihack.akunclay/com.unity3d.player.UnityPlayerGameA
 | `server` | 接続先 ([`deploy/README.md`](../deploy/README.md) の環境の URL)。`wss://…/v1/ws` でもよい。無ければ投稿は「この端末内」 |
 | `room` | 入るセッションの ID。空なら部屋を作ってホストになる (ID はログと `files/session.txt` に出る。ケイ側はこれで参加) |
 | `prepare` / `play` | 準備・本番の秒数 (既定 120 / 180)。ホストのときだけ使う |
-| `name` / `map` | 名前 / マップ (既定 `bibai-museum`) |
+| `result` | 結果を見せる秒数 (既定 20)。過ぎるとサーバーが次のラウンドを同じ役割で始める。`0` ならホストが「次のラウンドへ」を押す |
+| `name` / `map` | 名前 / 部屋を作るときのマップ (既定 `bibai-museum`)。あとでゲームのパネルで替えられる |
 
 つなぐと右にゲームのパネルが出ます (ラウンド・フェーズ・残り時間・役割・参加人数)。流れは仕様書 4 章のとおりです。
 
-1. ホスト (部屋を作った端末) が「準備をはじめる」。この端末がドロ、ほかの全員がケイになる
-2. 準備中と本番の間、ドロは投稿・更新できる。ラウンドの最初の投稿に自動で化ける (「化ける」で切り替え)
-3. 期限が来るとホストが自動で次へ進める (「本番をはじめる」「ラウンドを終える」で早めることもできる)。全てのドロが見つかっても終わる
-4. 終了したら「次のラウンドへ」。前のラウンドの投稿の一覧は空になる (粘土は残る)
+1. ホスト (部屋を作った端末) は、ゲームのパネルの「マップ: …▶ 次へ」でマップを選ぶ (サーバーに登録したマップを順に切り替える。参加者全員には snapshot の `session.mapId` で知らされる)。マップはサーバーの管理画面 (`<接続先>/admin`) で登録する
+2. ホストが「準備をはじめる」。この端末がドロ、ほかの全員がケイになる
+3. 準備中と本番の間、ドロは投稿・更新できる。ラウンドの最初の投稿に自動で化ける (「化ける」で切り替え)
+4. 期限が来るとサーバーが次へ進める (「本番をはじめる」「ラウンドを終える」で早めることもできる)。全てのドロが見つかっても終わる
+5. 終了したら、`result` 秒の後にサーバーが次のラウンドを始める (パネルに「次まで」の残り時間が出る)。その間もマップを替えられ、「次のラウンドへ」ですぐに始めることもできる。前のラウンドの投稿の一覧は空になる (粘土は残る)
 
 使う API は `Assets/AKun/Scripts/Uploader.cs` の `ServerTarget` の先頭にまとめてあります。
 サーバーにまだ無い API (404 `NOT_FOUND` / 405 / 501) は、ログに `[未実装]` と 1 回だけ出して、この端末の中で済ませます (フェーズもこの端末で進める)。
@@ -149,7 +151,7 @@ Unity -batchmode -quit -projectPath a-kun-unity -executeMethod AKun.EditorTools.
 Unity -batchmode -projectPath a-kun-unity -executeMethod AKun.EditorTools.GameTests.RunLive -akunServer https://bibai.t0waxx.com/a-kun-01
 ```
 
-`RunLive` は本物のサーバーで、部屋を作る → もう 1 人が入る → 準備 → 投稿・擬態 → 本番 → 終了 → 次のラウンド、を一通り回します。
+`RunLive` は本物のサーバーで、部屋を作る → もう 1 人が入る → マップを替える (2 つ以上あるとき) → 準備 → 投稿・擬態 → 本番 → 終了 → サーバーが次のラウンドを始める、を一通り回します。
 
 ## 調整しやすい値 (`ClayApp.cs` の先頭)
 
