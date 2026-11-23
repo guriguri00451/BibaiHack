@@ -25,8 +25,6 @@ import {
   ReplayResponseSchema,
   SessionDetailSchema,
   SessionIdParamSchema,
-  SessionListQuerySchema,
-  SessionListResponseSchema,
   SetMapRequestSchema,
   StartRoundRequestSchema,
   UpdateObjectRequestSchema,
@@ -34,7 +32,7 @@ import {
 import { SessionStateResponseSchema } from "../contracts/ws.ts";
 import type { Db } from "../db/client.ts";
 import { gamePlayers, gameSessions, users } from "../db/schema.ts";
-import { ASSET_CONTENT_TYPE, DOWNLOAD_URL_TTL_SECONDS, MAX_ASSET_BYTES, SESSION_LIST_STALE_MS } from "../game/rules.ts";
+import { ASSET_CONTENT_TYPE, DOWNLOAD_URL_TTL_SECONDS, MAX_ASSET_BYTES } from "../game/rules.ts";
 import type { GameService } from "../game/service.ts";
 import { mapAssetUrls, type MapCatalog } from "../maps/maps.ts";
 import type { UrlSigner } from "../storage/signed.ts";
@@ -132,24 +130,6 @@ export function registerRoutes(app: OpenAPIHono, deps: ApiDeps) {
         { id: session.id, status: session.status, round: session.round, mapId: session.mapId, playerId: player.id },
         201,
       );
-    },
-  );
-
-  // ---- GET /v1/sessions ----
-  app.openapi(
-    createRoute({
-      method: "get",
-      path: "/v1/sessions",
-      summary: "参加できるセッションの一覧（新しい順。役割・スコアは含まない）",
-      description: "最後の動き（作成・参加・フェーズの期限）から 6 時間経ったセッションは出さない",
-      security,
-      request: { query: SessionListQuerySchema },
-      responses: { 200: json(SessionListResponseSchema, "OK"), ...errors(400, 401) },
-    }),
-    async (c) => {
-      await requireUser(c, deps);
-      const { limit } = c.req.valid("query");
-      return c.json({ sessions: await game.listSessions(limit, SESSION_LIST_STALE_MS) }, 200);
     },
   );
 
