@@ -29,6 +29,3 @@ export const MAX_ASSET_BYTES = 20 * 1024 * 1024;
 export const UPLOAD_URL_TTL_SECONDS = 5 * 60;
 /** snapshot・object.* に載せるダウンロード URL の期限。切れたら再接続（snapshot）か object.updated で新しい URL が届く */
 export const DOWNLOAD_URL_TTL_SECONDS = 60 * 60;
-
-/** GET /v1/sessions で、最後の動きからこれだけ経ったセッションは一覧に出さない */
-export const SESSION_LIST_STALE_MS = 6 * 60 * 60 * 1000;
