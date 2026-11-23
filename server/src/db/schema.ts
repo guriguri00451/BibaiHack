@@ -108,12 +108,18 @@ export const gameObjects = pgTable(
   ],
 );
 
-/** 管理画面から登録したマップ。GLB は ObjectStorage の modelKey に置く（server/maps/ の組み込みマップとは別） */
+/**
+ * 管理画面から登録したマップ（server/maps/ の組み込みマップとは別）。
+ * GLB は ObjectStorage の modelKey、Gaussian Splat（SPZ）は splatKey に置く。少なくともどちらか一方はある
+ */
 export const maps = pgTable("maps", {
   mapId: text("map_id").primaryKey(),
   name: text("name").notNull(),
-  modelKey: text("model_key").notNull(),
+  /** null なら SPZ だけのマップ（model.glb は空のシーンを返す） */
+  modelKey: text("model_key"),
   modelSize: integer("model_size").notNull(),
+  splatKey: text("splat_key"),
+  splatSize: integer("splat_size"),
   transform: jsonb("transform").$type<Transform>().notNull(),
   createdAt: createdAt(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
