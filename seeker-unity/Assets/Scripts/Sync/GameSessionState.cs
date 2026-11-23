@@ -71,6 +71,17 @@ namespace Seeker.Sync
             return isChanged;
         }
 
+        /// <summary>
+        /// snapshot の <c>payload.session.mapId</c>。マップはホストが待機中・finished の間に替えられ、
+        /// 替わると snapshot が送り直されるので snapshot だけを見る。無ければ null。
+        /// </summary>
+        public static string ReadMapId(ServerMessage message)
+        {
+            if (message.Type != "session.snapshot") return null;
+            var mapId = (string)(message.Payload["session"] as JObject)?["mapId"];
+            return string.IsNullOrEmpty(mapId) ? null : mapId;
+        }
+
         public static bool TryParsePhase(string status, out GamePhase phase)
         {
             switch (status)
