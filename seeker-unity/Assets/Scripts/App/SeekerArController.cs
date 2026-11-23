@@ -140,6 +140,7 @@ namespace Seeker.App
                 {
                     if (!await mapPresenter.LoadAsync(definition, IsLatest)) return;
                     mapLoads.MarkLoaded(definition);
+                    Debug.Log($"[SeekerAr] マップを差し替えた mapId={definition.mapId} model={definition.modelUrl} splat={definition.splatUrl}");
                 }
                 else
                 {

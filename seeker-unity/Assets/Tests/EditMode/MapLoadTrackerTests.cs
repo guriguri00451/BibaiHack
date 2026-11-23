@@ -4,8 +4,8 @@ namespace Seeker.Ar.Tests
 {
     public class MapLoadTrackerTests
     {
-        private static MapDefinition Map(string mapId, string modelUrl) =>
-            new MapDefinition { mapId = mapId, modelUrl = modelUrl };
+        private static MapDefinition Map(string mapId, string modelUrl, string splatUrl = null) =>
+            new MapDefinition { mapId = mapId, modelUrl = modelUrl, splatUrl = splatUrl };
 
         [Test]
         public void NeedsReload_ReturnsTrue_WhenNothingIsLoaded()
@@ -40,6 +40,24 @@ namespace Seeker.Ar.Tests
             tracker.MarkLoaded(Map("a", "https://h/v1/maps/a/model.glb?v=1"));
 
             Assert.That(tracker.NeedsReload(Map("a", "https://h/v1/maps/a/model.glb?v=2")), Is.True);
+        }
+
+        [Test]
+        public void NeedsReload_ReturnsTrue_WhenSplatUrlChangesWithSameMapId()
+        {
+            var tracker = new MapLoadTracker();
+            tracker.MarkLoaded(Map("z", "https://h/v1/maps/z/model.glb?v=1", "https://h/v1/maps/z/splat.spz?v=1"));
+
+            Assert.That(tracker.NeedsReload(Map("z", "https://h/v1/maps/z/model.glb?v=1", "https://h/v1/maps/z/splat.spz?v=2")), Is.True);
+        }
+
+        [Test]
+        public void NeedsReload_ReturnsFalse_WhenSplatUrlIsSame()
+        {
+            var tracker = new MapLoadTracker();
+            tracker.MarkLoaded(Map("z", "u", "https://h/v1/maps/z/splat.spz?v=1"));
+
+            Assert.That(tracker.NeedsReload(Map("z", "u", "https://h/v1/maps/z/splat.spz?v=1")), Is.False);
         }
 
         [Test]

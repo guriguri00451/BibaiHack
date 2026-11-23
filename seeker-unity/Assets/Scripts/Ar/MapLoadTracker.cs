@@ -9,6 +9,7 @@ namespace Seeker.Ar
         private int latestRequest;
         private string loadedMapId;
         private string loadedModelUrl;
+        private string loadedSplatUrl;
 
         /// <summary>新しい要求を始める。以前の要求はこの時点で古くなる。</summary>
         public int BeginRequest() => ++latestRequest;
@@ -16,16 +17,20 @@ namespace Seeker.Ar
         public bool IsLatest(int request) => request == latestRequest;
 
         /// <summary>
-        /// GLB を読み込み直す必要があるか。登録マップの modelUrl は GLB を差し替えると <c>?v=</c> が変わるので、
-        /// mapId が同じでも modelUrl が違えば読み込み直す。
+        /// GLB / SPZ を読み込み直す必要があるか。登録マップの URL は中身を差し替えると <c>?v=</c> が変わるので、
+        /// mapId が同じでも modelUrl / splatUrl が違えば読み込み直す。
         /// </summary>
         public bool NeedsReload(MapDefinition definition) =>
-            definition.mapId != loadedMapId || definition.modelUrl != loadedModelUrl;
+            definition.mapId != loadedMapId || definition.modelUrl != loadedModelUrl || NormalizeEmpty(definition.splatUrl) != loadedSplatUrl;
 
         public void MarkLoaded(MapDefinition definition)
         {
             loadedMapId = definition.mapId;
             loadedModelUrl = definition.modelUrl;
+            loadedSplatUrl = NormalizeEmpty(definition.splatUrl);
         }
+
+        // JsonUtility は null の文字列を "" で読むことがあるので、null と "" を同じ「SPZ 無し」として比べる
+        private static string NormalizeEmpty(string value) => string.IsNullOrEmpty(value) ? null : value;
     }
 }
