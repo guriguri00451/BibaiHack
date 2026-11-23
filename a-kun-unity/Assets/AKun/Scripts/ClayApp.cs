@@ -70,7 +70,7 @@ namespace AKun
         static readonly Color RING_KNEAD = Gfx.Hex("#ff9e40");
 
         // 粘土の表面からこの距離 (m) より近くでつまんだときは、粘土ごと動かす・回す操作を始めない
-        const float NO_MOVE_NEAR = 0.12f;
+        const float NO_MOVE_NEAR = 0.06f;
         // 格子が粗いので、手の太さ・影響の幅が格子 1 マスより細くなりすぎないようにする (格子単位)
         const float MIN_R_GRID = 1.2f, MIN_F_GRID = 1.5f;
         // 頭の前に置く: forward = 粘土の手前の面までの距離 (m)。drop = 0: 粘土の中心が目と同じ高さ
@@ -959,7 +959,7 @@ namespace AKun
             // レイの線と、当たった所の点
             var line = pointers[hi].line;
             line.enabled = true;
-            line.SetPosition(0, o + Vector3.down * 0.02f);
+            line.SetPosition(0, o); // 親指と人差し指の間から出す (PinchRay)
             line.SetPosition(1, hit.point);
             brushMat[hi].SetColor("_BaseColor", hs.pinching ? new Color(1, 0.84f, 0.31f, 0.9f) : new Color(1, 1, 1, 0.7f));
             brushCursor[hi].position = hit.point;
@@ -1385,7 +1385,7 @@ namespace AKun
                 // つまんだ所に小さな輪と音 (伸ばす音の高さは、ここからの距離で決める)
                 hfx[hs == hands[0] ? 0 : 1].pullStart = hs.pinchPos;
                 var nw = clay.rotation * n;
-                Sfx.Play("pop", hs.pinchPos, 0.45f, 0.8f);
+                Sfx.Play("pinch", hs.pinchPos, 0.7f);
                 fx.Ripple(GridToWorld(g - n * s) + nw * 0.002f, nw, new Color(1, 0.84f, 0.31f, 0.85f), 0.008f, 0.04f, 0.35f);
             }
             else if (s < WorldLenToGrid(NO_MOVE_NEAR))
@@ -1401,6 +1401,7 @@ namespace AKun
         void EndPinch(HandState hs)
         {
             if (!hs.pinching) return;
+            if (hs.pinchMode == "pull") Sfx.Play("release", hs.pinchPos, 0.6f); // 伸ばしていた粘土を離した
             hs.pinching = false;
             hs.pinchMode = null;
             manipDirty = true;
@@ -1472,6 +1473,27 @@ namespace AKun
             return true;
         }
 
+        // 親指と人差し指の間から出るレイ (MRTK3 の HandRay と同じ考え方)。
+        // 起点: 親指の付け根 (ThumbProximal) と人差し指の付け根 (IndexProximal) の中ほど。つまんでも動きにくい所なので、つまんだ瞬間にレイがぶれない。
+        // 向き: 頭から決める「肩のあたりの支点」から起点を通る向き。支点は頭の 8cm 前、手の高さに応じて 20〜60cm 下、手の側へ 8〜15cm
+        bool PinchRay(HandState hs, out Vector3 origin, out Vector3 dir)
+        {
+            origin = default; dir = default;
+            if (!hs.valid.Contains(XRHandJointID.IndexProximal) || !hs.valid.Contains(XRHandJointID.ThumbProximal)) return false;
+            origin = (hs.jreal[XRHandJointID.IndexProximal] + hs.jreal[XRHandJointID.ThumbProximal]) * 0.5f; // 震えを抑えた関節を使う
+            var head = cam.transform;
+            var h = head.InverseTransformPoint(origin);
+            float relY = Mathf.Clamp(-0.1f + Mathf.Min(0.65f * h.y, 0), -0.6f, -0.2f);
+            float relX = hs.side == Handedness.Right
+                ? Mathf.Clamp(0.03f + 0.65f * h.x, 0.08f, 0.15f)
+                : Mathf.Clamp(-0.03f + 0.65f * h.x, -0.15f, -0.08f);
+            var pivot = head.position + head.TransformVector(new Vector3(relX, relY, 0.08f));
+            var d = origin - pivot;
+            if (d.sqrMagnitude < 1e-6f) return false;
+            dir = d.normalized;
+            return true;
+        }
+
         void ShowUiPointer(int i, ButtonPanel.Hit hit, Vector3 origin, bool pressed)
         {
             var (ring, _, line) = pointers[i];
@@ -1485,7 +1507,7 @@ namespace AKun
             ring.localScale = new Vector3(0.022f * sc, 0.022f * sc, 1);
             var r = ring.GetComponent<MeshRenderer>();
             ButtonPanel.SetRect(r, new Color(1, 1, 1, 0), pressed ? Gfx.Hex("#ffd54f") : Color.white, 0.022f * sc, 0.022f * sc, 0.011f * sc, 0.004f * sc, 0.95f);
-            line.SetPosition(0, origin + Vector3.down * 0.02f);
+            line.SetPosition(0, hiding ? origin : origin + Vector3.down * 0.02f);
             line.SetPosition(1, ring.position);
         }
 
@@ -1528,7 +1550,8 @@ namespace AKun
                 ReadJoints(hs, hand, t);
 
                 // レイが板を指しているか (粘土のすぐそばにある手は、粘土を触る方を優先して指さない)
-                bool hasRay = HandRay(hs, hand, out var rayO, out var rayD);
+                // 隠す場所を選んでいる間は、親指と人差し指の間から出るレイ (MRTK3 と同じ肩の支点の方式) にする
+                bool hasRay = hiding ? PinchRay(hs, out var rayO, out var rayD) : HandRay(hs, hand, out rayO, out rayD);
                 ButtonPanel.Hit hit = null;
                 if (hasRay && (!hs.pinching || hs.uiPinch))
                 {
