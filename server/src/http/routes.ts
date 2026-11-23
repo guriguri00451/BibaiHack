@@ -34,7 +34,7 @@ import type { Db } from "../db/client.ts";
 import { gamePlayers, gameSessions, users } from "../db/schema.ts";
 import { ASSET_CONTENT_TYPE, DOWNLOAD_URL_TTL_SECONDS, MAX_ASSET_BYTES } from "../game/rules.ts";
 import type { GameService } from "../game/service.ts";
-import type { MapCatalog } from "../maps/maps.ts";
+import { mapAssetUrls, type MapCatalog } from "../maps/maps.ts";
 import type { UrlSigner } from "../storage/signed.ts";
 import { isValidKey, type ObjectStorage } from "../storage/storage.ts";
 import { externalBase } from "./base-url.ts";
@@ -436,8 +436,7 @@ export function registerRoutes(app: OpenAPIHono, deps: ApiDeps) {
     },
   );
 
-  const modelUrl = (c: Context, m: { mapId: string; version: string }) =>
-    `${base(c)}/v1/maps/${m.mapId}/model.glb` + (m.version === "builtin" ? "" : `?v=${m.version}`);
+  const assetUrls = (c: Context, m: Parameters<typeof mapAssetUrls>[1]) => mapAssetUrls(base(c), m);
 
   // ---- GET /v1/maps ----
   app.openapi(
@@ -451,7 +450,7 @@ export function registerRoutes(app: OpenAPIHono, deps: ApiDeps) {
     async (c) => {
       await requireUser(c, deps);
       const list = await maps.list();
-      return c.json({ maps: list.map((m) => ({ mapId: m.mapId, name: m.name, modelUrl: modelUrl(c, m) })) }, 200);
+      return c.json({ maps: list.map((m) => ({ mapId: m.mapId, name: m.name, ...assetUrls(c, m) })) }, 200);
     },
   );
 
@@ -470,7 +469,7 @@ export function registerRoutes(app: OpenAPIHono, deps: ApiDeps) {
       const { mapId } = c.req.valid("param");
       const m = await maps.get(mapId);
       if (!m) throw new ApiError(404, "MAP_NOT_FOUND", "Map not found.");
-      return c.json({ mapId, name: m.name, modelUrl: modelUrl(c, m), transform: m.transform }, 200);
+      return c.json({ mapId, name: m.name, ...assetUrls(c, m), transform: m.transform }, 200);
     },
   );
 
@@ -480,6 +479,16 @@ export function registerRoutes(app: OpenAPIHono, deps: ApiDeps) {
     if (!glb) throw new ApiError(404, "MAP_NOT_FOUND", "Map not found.");
     return c.body(glb as Uint8Array<ArrayBuffer>, 200, {
       "content-type": "model/gltf-binary",
+      "cache-control": "public, max-age=300",
+    });
+  });
+
+  // SPZ（Gaussian Splat）も GLB と同じく秘密ではないので認証なし
+  app.get("/v1/maps/:mapId/splat.spz", async (c) => {
+    const spz = await maps.splat(c.req.param("mapId"));
+    if (!spz) throw new ApiError(404, "SPLAT_NOT_FOUND", "This map has no splat.");
+    return c.body(spz as Uint8Array<ArrayBuffer>, 200, {
+      "content-type": "application/octet-stream",
       "cache-control": "public, max-age=300",
     });
   });
