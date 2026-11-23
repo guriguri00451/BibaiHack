@@ -130,6 +130,17 @@ export function fakeGlb(size = 64): Uint8Array {
   return b;
 }
 
+/** SPZ v4 の形のヘッダだけ持つ偽物（"NGSP"・版・点の数・SH 次数） */
+export function fakeSpz(size = 64, opts: { version?: number; points?: number; shDegree?: number } = {}): Uint8Array {
+  const b = new Uint8Array(size);
+  const v = new DataView(b.buffer);
+  v.setUint32(0, 0x5053474e, true);
+  v.setUint32(4, opts.version ?? 4, true);
+  v.setUint32(8, opts.points ?? 1000, true);
+  v.setUint8(12, opts.shDegree ?? 3);
+  return b;
+}
+
 export const pose = (x: number) => ({
   position: [x, 0, 0],
   rotation: [0, 0, 0, 1],
