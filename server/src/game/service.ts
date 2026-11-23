@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, inArray, ne, or, sql } from "drizzle-orm";
 import type { Transform } from "../contracts/transform.ts";
 import { normalizeTransform } from "../contracts/transform.ts";
 import type { FinishReason, PublicObject, ServerMessage, SnapshotPayload } from "../contracts/ws.ts";
@@ -41,6 +41,16 @@ const TRANSFORM_LOG_INTERVAL_MS = 1_000;
 const DEADLINE_SLACK_MS = 50;
 
 const iso = (d: Date | null) => d?.toISOString() ?? null;
+
+/** 一覧で返すセッションの進行状態。メモリに載っていればそちらが新しい（WS の接続・タイマーで変わる） */
+function liveHeader(r: typeof gameSessions.$inferSelect, live: GameState | null) {
+  return {
+    status: live?.status ?? r.status,
+    round: live?.round ?? r.round,
+    mapId: live?.mapId ?? r.mapId,
+    phaseEndsAt: iso(live ? live.phaseEndsAt : r.phaseEndsAt),
+  };
+}
 
 /**
  * ゲームのルールと状態の変化（仕様書 4章・5章・6章）。REST・WS・タイマーのどれから来ても、ここを通る。
@@ -576,11 +586,7 @@ export class GameService {
       out.push({
         id: r.id,
         hostUserId: r.hostUserId,
-        // メモリに載っていればそちらが新しい（WS の接続・タイマーで変わる）
-        status: live?.status ?? r.status,
-        round: live?.round ?? r.round,
-        mapId: live?.mapId ?? r.mapId,
-        phaseEndsAt: iso(live ? live.phaseEndsAt : r.phaseEndsAt),
+        ...liveHeader(r, live),
         cycle: (live ? live.cycle : r.cycle) ? { resultSeconds: (live ? live.cycle : r.cycle)!.resultSeconds } : null,
         createdAt: r.createdAt.toISOString(),
         players: players
@@ -595,6 +601,57 @@ export class GameService {
               connected: lp?.connected ?? false,
             };
           }),
+      });
+    }
+    return out;
+  }
+
+  /**
+   * 参加前のセッション一覧（GET /v1/sessions）。役割・スコア・userId は返さない。
+   * game_sessions に更新時刻の列が無いので、「最後の動き」は作成・最後の参加・最後の期限のうち新しいものとみなし、
+   * それが staleMs より前なら外す。メモリに載っているもの（誰かが WS で触った・タイマーが動いている）は常に残す
+   */
+  async listSessions(limit: number, staleMs: number, now = new Date()) {
+    const cutoff = new Date(now.getTime() - staleMs);
+    const liveIds = (await this.registry.loaded()).map((s) => s.sessionId);
+    const lastJoin = this.db
+      .select({ sessionId: gamePlayers.sessionId, at: sql<Date>`max(${gamePlayers.createdAt})`.as("last_join_at") })
+      .from(gamePlayers)
+      .groupBy(gamePlayers.sessionId)
+      .as("last_join");
+    const rows = await this.db
+      .select({ session: gameSessions, hostName: users.name })
+      .from(gameSessions)
+      .innerJoin(users, eq(users.id, gameSessions.hostUserId))
+      .leftJoin(lastJoin, eq(lastJoin.sessionId, gameSessions.id))
+      .where(
+        or(
+          gt(gameSessions.createdAt, cutoff),
+          gt(gameSessions.phaseEndsAt, cutoff),
+          gt(lastJoin.at, cutoff),
+          liveIds.length > 0 ? inArray(gameSessions.id, liveIds) : undefined,
+        ),
+      )
+      .orderBy(desc(gameSessions.createdAt))
+      .limit(limit);
+    if (rows.length === 0) return [];
+    const counts = await this.db
+      .select({ sessionId: gamePlayers.sessionId, n: count() })
+      .from(gamePlayers)
+      .where(inArray(gamePlayers.sessionId, rows.map((r) => r.session.id)))
+      .groupBy(gamePlayers.sessionId);
+    const countOf = new Map(counts.map((c) => [c.sessionId, c.n]));
+    const out = [];
+    for (const { session: r, hostName } of rows) {
+      const live = await this.registry.peek(r.id);
+      out.push({
+        id: r.id,
+        ...liveHeader(r, live),
+        hostName,
+        // WS で後から入った分もあるので、メモリの方が多ければそちらを使う
+        playerCount: Math.max(countOf.get(r.id) ?? 0, live?.players.size ?? 0),
+        connectedCount: live ? [...live.players.values()].filter((p) => p.connected).length : 0,
+        createdAt: r.createdAt.toISOString(),
       });
     }
     return out;

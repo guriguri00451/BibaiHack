@@ -52,6 +52,39 @@ export const JoinSessionResponseSchema = z
   .object({ sessionId: z.uuid(), playerId: z.uuid() })
   .openapi("JoinSessionResponse");
 
+// GET /v1/sessions
+/**
+ * 参加前のセッション一覧（ケイのサーバーブラウザ用）。
+ * 役割・スコア・userId は載せない（参加前にドロの正体が分かってしまうため）
+ */
+export const SessionSummarySchema = z
+  .object({
+    id: z.uuid(),
+    status: SessionStatusSchema,
+    round: z.int().min(1),
+    mapId: z.string(),
+    hostName: z.string(),
+    playerCount: z.int().min(0),
+    connectedCount: z.int().min(0).describe("今 WS で繋がっている参加者の数"),
+    phaseEndsAt: z.iso.datetime().nullable(),
+    createdAt: z.iso.datetime(),
+  })
+  .openapi("SessionSummary");
+
+export const SessionListQuerySchema = z.object({
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .default(20)
+    .openapi({ param: { name: "limit", in: "query" }, example: 20 }),
+});
+
+export const SessionListResponseSchema = z
+  .object({ sessions: z.array(SessionSummarySchema).describe("新しい順") })
+  .openapi("SessionListResponse");
+
 // GET /v1/sessions/{id}
 export const PlayerSchema = z
   .object({
