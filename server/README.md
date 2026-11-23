@@ -37,7 +37,7 @@ bun run typecheck
 | アセット | `POST /v1/assets/uploads` → 返った `uploadUrl` に `PUT`（GLB のみ・20MB まで・URL は5分有効） |
 | オブジェクト（ドロ） | `POST /v1/sessions/{id}/objects`、`PATCH`・`DELETE …/objects/{objectId}`、`POST …/objects/{objectId}/disguise` |
 | 捕獲（ケイ） | `POST /v1/sessions/{id}/captures` |
-| マップ | `GET /v1/maps`（一覧）、`GET /v1/maps/{mapId}`、GLB は `GET /v1/maps/{mapId}/model.glb` で認証なし |
+| マップ | `GET /v1/maps`（一覧）、`GET /v1/maps/{mapId}`、GLB は `GET /v1/maps/{mapId}/model.glb`、Gaussian Splat（SPZ）は `GET /v1/maps/{mapId}/splat.spz`（どちらも認証なし） |
 | 管理画面 | `GET /admin`（画面）、`/v1/admin/*`（その API。OpenAPI には載せない） |
 | リプレイ | `GET /v1/sessions/{id}/rounds/{round}/replay`（終わったラウンドだけ） |
 | WebSocket | `wss://…/v1/ws`：`auth` → `session.snapshot`。C→S は `player.transform`・`object.transform`。S→C は `session.phase_changed`・`object.created/updated/deleted/transform`・`player.caught`・`command.ack`・`error` |
@@ -86,14 +86,16 @@ bun run typecheck
 
 ### マップ
 
-- 組み込み：`maps/<mapId>.json` と GLB。起動時に読む。変えるにはデプロイ
-- 登録：管理画面から上げたもの。定義は DB の `maps`、GLB は `STORAGE_DIR`（S3 を設定していても）の `maps/<mapId>/<uuid>.glb`。100MB まで。差し替えると新しいキーに置き、`modelUrl` に `?v=` が付いて変わる
-- 組み込みの mapId では登録できない。消しても GLB は残す（そのマップで遊んだ部屋のため）
+- 組み込み：`maps/<mapId>.json` と、その中の `model`（GLB）・`splat`（SPZ）。どちらか一方は要る。起動時に読む。変えるにはデプロイ
+- 登録：管理画面から上げたもの。定義は DB の `maps`、GLB は `STORAGE_DIR`（S3 を設定していても）の `maps/<mapId>/<uuid>.glb`、SPZ は `maps/<mapId>/<uuid>.spz`。それぞれ 100MB まで（Cloudflare が1リクエスト 100MB までなので、GLB と SPZ を一度に送るなら合計で 100MB まで）。差し替えると新しいキーに置き、`modelUrl`・`splatUrl` に `?v=` が付いて変わる
+- SPZ：`GET /v1/maps` と `GET /v1/maps/{mapId}` の `splatUrl`。無ければ `null`。登録のときにヘッダを見て、SPZ の v1〜4（seeker-unity の UnityGaussianSplatting が読める版）・点が1つ以上・SH 次数 0〜3 だけを受ける
+- SPZ だけのマップも登録できる。そのとき `modelUrl` は何も無いシーンの GLB を返す（GLB を読むクライアントが失敗しないように）。GLB が無いマップからは SPZ を外せない
+- 組み込みの mapId では登録できない。消しても GLB・SPZ は残す（そのマップで遊んだ部屋のため）
 
 ### 管理画面（`/admin`）
 
 - セッション：新しい順に 50 件。状態・残り時間・参加者（繋いでいるか・役割・点）。ホストでなくても、ラウンドを始める（サイクルがあればその設定、無ければホストがドロ・ほかはケイ・準備 120 秒）・本番へ・終える・サイクルを止める・マップを替える
-- マップ：登録・差し替え・名前と置き方（位置・回転・大きさ）の変更・削除・3D で確認
+- マップ：登録・差し替え（GLB・SPZ）・SPZ を外す・名前と置き方（位置・回転・大きさ）の変更・削除・3D で確認（GLB だけ）
 - トークンは `ADMIN_TOKEN`。デプロイ先では全環境で同じ値（[`../deploy/README.md`](../deploy/README.md)）
 
 ## デプロイ

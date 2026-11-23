@@ -203,7 +203,11 @@ export const MapSummarySchema = z
   .object({
     mapId: z.string(),
     name: z.string(),
-    modelUrl: z.url().describe("マップの GLB（認証なしで取れる）"),
+    modelUrl: z.url().describe("マップの GLB（認証なしで取れる）。SPZ だけのマップでは空のシーン"),
+    splatUrl: z
+      .url()
+      .nullable()
+      .describe("マップの Gaussian Splat（SPZ v1〜4、認証なしで取れる）。無ければ null"),
   })
   .openapi("MapSummary");
 
@@ -217,7 +221,11 @@ export const MapDefinitionSchema = z
   .object({
     mapId: z.string(),
     name: z.string(),
-    modelUrl: z.url().describe("マップの GLB（認証なしで取れる）"),
+    modelUrl: z.url().describe("マップの GLB（認証なしで取れる）。SPZ だけのマップでは空のシーン"),
+    splatUrl: z
+      .url()
+      .nullable()
+      .describe("マップの Gaussian Splat（SPZ v1〜4、認証なしで取れる）。無ければ null"),
     transform: TransformSchema.describe("マップの GLB を共有マップ座標に置く Transform"),
   })
   .openapi("MapDefinition");
