@@ -109,12 +109,15 @@
   <section id="maps">
     <div class="card">
       <h2>マップを登録する</h2>
-      <p class="small muted" style="margin-top:0">同じ ID で送ると差し替えます（GLB を空にすると名前と置き方だけ変えます）。Unity のホストは、部屋を作ったあと「準備をはじめる」前に、この一覧から選べます。</p>
+      <p class="small muted" style="margin-top:0">同じ ID で送ると差し替えます（ファイルを空にすると名前と置き方だけ変えます）。GLB と SPZ（Gaussian Splat）のどちらか一方があれば登録できます。Unity のホストは、部屋を作ったあと「準備をはじめる」前に、この一覧から選べます。</p>
       <form id="mapForm">
         <div class="row">
           <input name="mapId" placeholder="ID（例 bibai-station）" pattern="[a-z0-9\-]{1,64}" required>
           <input name="name" placeholder="名前（例 美唄駅）">
-          <input name="model" type="file" accept=".glb,model/gltf-binary">
+        </div>
+        <div class="row">
+          <label class="small">GLB <input name="model" type="file" accept=".glb,model/gltf-binary"></label>
+          <label class="small">SPZ <input name="splat" type="file" accept=".spz"></label>
         </div>
         <div class="tf" data-tf></div>
         <button class="b primary" id="mapSubmit">登録する</button>
@@ -304,13 +307,14 @@ function renderMaps() {
         <strong>${esc(m.name)}</strong>
         <span class="chip">${m.source === "builtin" ? "組み込み" : "登録"}</span>
       </div>
-      <div class="small muted"><span class="mono">${esc(m.mapId)}</span> · ${mb(m.modelSize)}${m.updatedAt ? " · " + new Date(m.updatedAt).toLocaleString() : ""}</div>
-      <div data-view style="margin:8px 0"><button class="b" data-preview>3D で見る</button> <a class="small" href="${esc(m.modelUrl)}" download>GLB</a></div>
+      <div class="small muted"><span class="mono">${esc(m.mapId)}</span> · ${m.modelSize ? "GLB " + mb(m.modelSize) : "GLB なし"}${m.splatSize !== null ? " · SPZ " + mb(m.splatSize) : ""}${m.updatedAt ? " · " + new Date(m.updatedAt).toLocaleString() : ""}</div>
+      <div data-view style="margin:8px 0"><button class="b" data-preview>3D で見る</button> <a class="small" href="${esc(m.modelUrl)}" download>GLB</a>${m.splatUrl ? ` <a class="small" href="${esc(m.splatUrl)}" download>SPZ</a>` : ""}</div>
       ${m.source === "builtin" ? '<p class="small muted" style="margin:0">server/maps/ にあるマップです。変えるときはファイルを直してデプロイします。</p>' : `
       <form data-edit>
         <div class="row"><input name="name" value="${esc(m.name)}" style="flex:1"></div>
         <div class="tf" data-tf></div>
         <div class="row"><input name="model" type="file" accept=".glb,model/gltf-binary"><span class="small muted">差し替える GLB（任意）</span></div>
+        <div class="row"><input name="splat" type="file" accept=".spz"><span class="small muted">差し替える SPZ（任意）</span>${m.splatSize !== null ? '<label class="small"><input name="removeSplat" type="checkbox"> SPZ を外す</label>' : ""}</div>
         <div class="row" style="margin-top:8px"><button class="b primary">保存</button><button type="button" class="b danger" data-del>消す</button></div>
       </form>`}
     </div>`).join("");
@@ -344,6 +348,8 @@ $("#mapList").addEventListener("submit", async (e) => {
   fd.set("name", form.name.value.trim());
   fd.set("transform", JSON.stringify(readTf(form.querySelector("[data-tf]"))));
   if (form.model.files[0]) fd.set("model", form.model.files[0]);
+  if (form.splat.files[0]) fd.set("splat", form.splat.files[0]);
+  if (form.removeSplat?.checked) fd.set("removeSplat", "1");
   const btn = form.querySelector("button.primary");
   btn.disabled = true;
   try { await api("POST", "/maps", fd); toast("保存しました"); await loadMaps(); }
@@ -358,8 +364,10 @@ $("#mapForm").addEventListener("submit", async (e) => {
   fd.set("name", form.name.value.trim());
   fd.set("transform", JSON.stringify(readTf(form.querySelector("[data-tf]"))));
   if (form.model.files[0]) fd.set("model", form.model.files[0]);
+  if (form.splat.files[0]) fd.set("splat", form.splat.files[0]);
+  const bytes = (form.model.files[0]?.size ?? 0) + (form.splat.files[0]?.size ?? 0);
   $("#mapSubmit").disabled = true;
-  $("#mapProgress").textContent = form.model.files[0] ? `${mb(form.model.files[0].size)} を送っています…` : "送っています…";
+  $("#mapProgress").textContent = bytes ? `${mb(bytes)} を送っています…` : "送っています…";
   try {
     await api("POST", "/maps", fd);
     toast("登録しました");
