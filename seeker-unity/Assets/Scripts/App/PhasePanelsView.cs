@@ -90,13 +90,7 @@ namespace Seeker.App
             return builder.ToString();
         }
 
-        public static string BuildResultText(GameResult result)
-        {
-            var builder = new StringBuilder("ゲーム終了\n\n");
-            if (result.isCaptured.HasValue) builder.Append(result.isCaptured.Value ? "ドロを捕まえた！" : "ドロは逃げ切った");
-            if (result.score.HasValue) builder.Append($"\nスコア: {result.score.Value}");
-            return builder.ToString();
-        }
+        public static string BuildResultText(GameResult result) => ScoreText.BuildResult(result);
 
         private Text CreateFullScreenPanel(Transform canvas, GamePhase phase, string initialText)
         {
