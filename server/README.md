@@ -32,7 +32,7 @@ bun run typecheck
 
 | 種類 | エンドポイント |
 |---|---|
-| 参加 | `POST /v1/guests`、`POST /v1/sessions`、`POST /v1/sessions/{id}/join`、`GET /v1/sessions/{id}`、`GET /v1/sessions/{id}/state` |
+| 参加 | `POST /v1/guests`、`GET /v1/sessions`（一覧。役割・スコアなし、最後の動きから6時間で外れる）、`POST /v1/sessions`、`POST /v1/sessions/{id}/join`、`GET /v1/sessions/{id}`、`GET /v1/sessions/{id}/state` |
 | ラウンド（ホスト） | `POST /v1/sessions/{id}/rounds/start` · `play` · `finish` · `stop-cycle`、`PUT /v1/sessions/{id}/map` |
 | アセット | `POST /v1/assets/uploads` → 返った `uploadUrl` に `PUT`（GLB のみ・20MB まで・URL は5分有効） |
 | オブジェクト（ドロ） | `POST /v1/sessions/{id}/objects`、`PATCH`・`DELETE …/objects/{objectId}`、`POST …/objects/{objectId}/disguise` |
