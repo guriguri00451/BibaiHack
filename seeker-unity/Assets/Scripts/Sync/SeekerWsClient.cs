@@ -93,6 +93,13 @@ namespace Seeker.Sync
 #endif
         }
 
+        /// <summary>Open のときだけ送る。未接続・切断中は黙って捨てる（Pose は次の値で置き換わるため再送しない）。</summary>
+        public void SendText(string json)
+        {
+            if (socket == null || socket.State != WebSocketState.Open) return;
+            _ = socket.SendText(json);
+        }
+
         private void SendAuth()
         {
             var json = JsonConvert.SerializeObject(new
