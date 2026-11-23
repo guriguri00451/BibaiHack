@@ -1,13 +1,22 @@
 import { openDb } from "../src/db/client.ts";
 import { createServer } from "../src/server.ts";
+import type { AssetStorage } from "../src/storage/assets.ts";
 import type { ObjectStorage } from "../src/storage/storage.ts";
 
 export const JWT_SECRET = "test-secret";
 
 /** PGlite 上でサーバーを起動する。テストファイルの先頭で await し、afterAll で stop を呼ぶ */
-export async function startServer(opts: { basePath?: string; storage?: ObjectStorage } = {}) {
+export async function startServer(
+  opts: { basePath?: string; storage?: ObjectStorage; assetStorage?: AssetStorage } = {},
+) {
   const { db, close } = await openDb({});
-  const srv = createServer({ db, jwtSecret: JWT_SECRET, basePath: opts.basePath, storage: opts.storage });
+  const srv = createServer({
+    db,
+    jwtSecret: JWT_SECRET,
+    basePath: opts.basePath,
+    storage: opts.storage,
+    assetStorage: opts.assetStorage,
+  });
   const server = Bun.serve({ port: 0, fetch: srv.fetch, websocket: srv.websocket });
   const base = `http://localhost:${server.port}${opts.basePath ?? ""}`;
 

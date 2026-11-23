@@ -140,20 +140,36 @@ describe("ラウンドの進行", () => {
 });
 
 describe("アセット", () => {
-  test("署名 URL に PUT して、ダウンロード URL で取り出せる", async () => {
-    const r = await room();
+  test("署名 URL に PUT した GLB を、オブジェクトの assetUrl でそのまま取り出せる", async () => {
+    const r = await room({ start: true });
     const glb = fakeGlb(100);
     const key = await s.uploadGlb(r.host.accessToken, r.id, glb);
     expect(key).toMatch(new RegExp(`^sessions/${r.id}/assets/[0-9a-f-]{36}\\.glb$`));
+    await r.call("POST", "/objects", { assetKey: key, transform: pose(0) });
+    await r.call("POST", "/rounds/play", {});
 
-    const dl = await s.request("GET", `/v1/assets/download-url?key=${encodeURIComponent(key)}`, undefined, r.seeker.accessToken);
-    expect(dl.status).toBe(200);
-    const got = await fetch(dl.body.url);
+    const state = await r.call("GET", "/state", undefined, "seeker");
+    const url = state.body.objects[0].assetUrl as string;
+    const got = await fetch(url);
     expect(got.headers.get("content-type")).toBe("model/gltf-binary");
     expect([...new Uint8Array(await got.arrayBuffer())]).toEqual([...glb]);
 
     // 署名を壊すと 403
-    expect((await fetch(dl.body.url.replace(/sig=[^&]+/, "sig=x"))).status).toBe(403);
+    expect((await fetch(url.replace(/sig=[^&]+/, "sig=x"))).status).toBe(403);
+  });
+
+  test("アップロードしていない・大きさの違う GLB ではオブジェクトを作れない", async () => {
+    const r = await room({ start: true });
+    const up = await s.request(
+      "POST",
+      "/v1/assets/uploads",
+      { sessionId: r.id, contentType: "model/gltf-binary", sizeBytes: 64 },
+      r.host.accessToken,
+    );
+    const create = () => r.call("POST", "/objects", { assetKey: up.body.assetKey, transform: pose(0) });
+    expect((await create()).body.error.code).toBe("ASSET_NOT_UPLOADED");
+    await fetch(up.body.uploadUrl, { method: "PUT", headers: { "content-type": "model/gltf-binary" }, body: fakeGlb(64) });
+    expect((await create()).status).toBe(201);
   });
 
   test("申告と違う大きさ・形式、同じ URL での上書き、参加者でない人は弾く", async () => {
@@ -208,7 +224,9 @@ describe("オブジェクト", () => {
 
     await r.call("POST", "/rounds/play", {});
     const snap = await k.c.next((m) => m.type === "session.snapshot" && m.payload.session.status === "playing");
-    expect(snap.payload.objects).toEqual([{ objectId: o.id, assetKey: o.assetKey, transform: pose(1) }]);
+    expect(snap.payload.objects).toEqual([
+      { objectId: o.id, assetKey: o.assetKey, assetUrl: expect.any(String), transform: pose(1) },
+    ]);
     const playState = await r.call("GET", "/state", undefined, "seeker");
     expect(playState.body.objects[0].isDisguise).toBeUndefined();
     expect(playState.body.objects[0].ownerPlayerId).toBeUndefined();
@@ -217,7 +235,7 @@ describe("オブジェクト", () => {
     const patched = await r.call("PATCH", `/objects/${o.id}`, { transform: pose(3) });
     expect(patched.status).toBe(200);
     const upd = await k.c.next((m) => m.type === "object.updated");
-    expect(upd.payload).toEqual({ objectId: o.id, assetKey: o.assetKey, transform: pose(3) });
+    expect(upd.payload).toEqual({ objectId: o.id, assetKey: o.assetKey, assetUrl: expect.any(String), transform: pose(3) });
     expect((await r.call("DELETE", `/objects/${o.id}`)).status).toBe(204);
     expect((await k.c.next((m) => m.type === "object.deleted")).payload).toEqual({ objectId: o.id });
     h.c.ws.close();
@@ -232,7 +250,7 @@ describe("オブジェクト", () => {
 
     await r.call("POST", "/rounds/start", { preparingSeconds: 60, roles: r.roles() });
     const bySeeker = await r.call("POST", "/objects", { assetKey: key, transform: pose(0) }, "seeker");
-    expect(bySeeker.body.error.code).toBe("NOT_A_HIDER");
+    expect(bySeeker.body.error.code).toBe("FORBIDDEN_ROLE");
     const notUploaded = await r.call("POST", "/objects", {
       assetKey: `sessions/${r.id}/assets/${crypto.randomUUID()}.glb`,
       transform: pose(0),
@@ -244,7 +262,7 @@ describe("オブジェクト", () => {
     const other = await room();
     const otherKey = await s.uploadGlb(other.host.accessToken, other.id);
     expect((await r.call("POST", "/objects", { assetKey: otherKey, transform: pose(0) })).body.error.code).toBe(
-      "INVALID_ASSET",
+      "ASSET_NOT_IN_SESSION",
     );
 
     // 別のドロのオブジェクトは触れない
@@ -265,7 +283,7 @@ describe("オブジェクト", () => {
       { transform: pose(2) },
       third.accessToken,
     );
-    expect(byOther.body.error.code).toBe("NOT_OWNER");
+    expect(byOther.body.error.code).toBe("NOT_OBJECT_OWNER");
   });
 
   test("擬態先は1人1つ。切り替えると前の擬態先が外れ、ケイには知らせない", async () => {
@@ -302,7 +320,7 @@ describe("オブジェクト", () => {
     expect(moved.payload).toEqual({ objectId: o.id, transform: pose(4) });
 
     k.c.send({ type: "object.transform", payload: { objectId: o.id, clientSeq: 1, transform: pose(0), requestId: "k1" } });
-    expect((await k.c.next((m) => m.type === "error")).payload).toMatchObject({ code: "NOT_A_HIDER", requestId: "k1" });
+    expect((await k.c.next((m) => m.type === "error")).payload).toMatchObject({ code: "FORBIDDEN_ROLE", requestId: "k1" });
 
     // 確定しなかった位置も、ラウンド終了時に DB へ書かれる
     await r.call("POST", "/rounds/finish", {});
@@ -325,7 +343,7 @@ describe("捕獲", () => {
     const h = await s.authed(r.host.accessToken, r.id);
 
     const byHider = await r.call("POST", "/captures", { objectId: real.id });
-    expect(byHider.body.error.code).toBe("NOT_A_SEEKER");
+    expect(byHider.body.error.code).toBe("FORBIDDEN_ROLE");
 
     const miss = await r.call("POST", "/captures", { objectId: decoy.id }, "seeker");
     expect(miss.body).toEqual({ result: "miss", scoreDelta: 0, score: 0 });

@@ -1,9 +1,11 @@
 import type { Server } from "bun";
 import type { Db } from "./db/client.ts";
 import { createApp } from "./http/app.ts";
+import { externalBase } from "./http/base-url.ts";
 import { errorBody } from "./http/errors.ts";
 import type { MapCatalog } from "./maps/maps.ts";
 import { buildServices } from "./services.ts";
+import type { AssetStorage } from "./storage/assets.ts";
 import type { ObjectStorage } from "./storage/storage.ts";
 import { createWsHandler, type WsData } from "./ws/handler.ts";
 
@@ -18,7 +20,10 @@ export function createServer(deps: {
   publicUrl?: string;
   /** 署名付き URL・modelUrl を作る URL。無ければリクエストの Host から作る */
   assetBaseUrl?: string;
+  /** ログ・Snapshot（と、assetStorage が無いときの GLB）の置き場 */
   storage?: ObjectStorage;
+  /** GLB の置き場（S3 など）。無ければ storage にサーバー自身が受ける */
+  assetStorage?: AssetStorage;
   maps?: MapCatalog;
   logFlushIntervalMs?: number;
 }) {
@@ -40,7 +45,8 @@ export function createServer(deps: {
       }
       if (url.pathname === "/v1/ws") {
         // upgrade は元の Request で行う（作り直した Request では接続を引き継げない）
-        if (server.upgrade(req, { data: {} })) return undefined;
+        const baseUrl = externalBase(req, { assetBaseUrl: deps.assetBaseUrl, basePath });
+        if (server.upgrade(req, { data: { baseUrl } })) return undefined;
         return new Response("Expected a WebSocket upgrade", { status: 426 });
       }
       return app.fetch(basePath ? new Request(url.toString(), req) : req);

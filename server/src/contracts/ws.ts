@@ -70,7 +70,10 @@ export const SnapshotPlayerSchema = z.object({
 export const PublicObjectSchema = z
   .object({
     objectId: z.uuid(),
+    /** 永続キー。クライアントのキャッシュキー・差し替え判定に使う（署名は毎回変わるため assetUrl は使えない） */
     assetKey: z.string(),
+    /** そのまま GET できる期限つき署名 URL（1時間） */
+    assetUrl: z.url().optional(),
     transform: TransformSchema,
     ownerPlayerId: z.uuid().optional(),
     isDisguise: z.boolean().optional(),

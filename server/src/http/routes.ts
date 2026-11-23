@@ -3,8 +3,6 @@ import { eq } from "drizzle-orm";
 import type { Context } from "hono";
 import { issueToken, verifyToken } from "../auth/token.ts";
 import {
-  AssetDownloadQuerySchema,
-  AssetDownloadResponseSchema,
   CaptureRequestSchema,
   CaptureResponseSchema,
   CreateAssetUploadRequestSchema,
@@ -32,11 +30,12 @@ import {
 import { SessionStateResponseSchema } from "../contracts/ws.ts";
 import type { Db } from "../db/client.ts";
 import { gamePlayers, gameSessions, users } from "../db/schema.ts";
-import { ASSET_CONTENT_TYPES, type AssetContentType, MAX_ASSET_BYTES } from "../game/rules.ts";
+import { ASSET_CONTENT_TYPE, DOWNLOAD_URL_TTL_SECONDS, MAX_ASSET_BYTES } from "../game/rules.ts";
 import type { GameService } from "../game/service.ts";
 import type { MapCatalog } from "../maps/maps.ts";
-import { DOWNLOAD_URL_TTL_SECONDS, UPLOAD_URL_TTL_SECONDS, type UrlSigner } from "../storage/signed.ts";
+import type { UrlSigner } from "../storage/signed.ts";
 import { isValidKey, type ObjectStorage } from "../storage/storage.ts";
+import { externalBase } from "./base-url.ts";
 import { ApiError } from "./errors.ts";
 
 export type ApiDeps = {
@@ -76,27 +75,13 @@ async function requireUser(c: Context, deps: ApiDeps): Promise<string> {
   return userId;
 }
 
-/** 外から見たこの環境の URL（…/a-kun-01 まで） */
-function externalBase(c: Context, deps: ApiDeps): string {
-  if (deps.assetBaseUrl) return deps.assetBaseUrl;
-  const u = new URL(c.req.url);
-  const proto = c.req.header("x-forwarded-proto") ?? u.protocol.replace(/:$/, "");
-  const host = c.req.header("x-forwarded-host") ?? c.req.header("host") ?? u.host;
-  return `${proto}://${host}${deps.basePath ?? ""}`;
-}
-
-const ASSET_KEY = /^sessions\/([0-9a-f-]{36})\/assets\/[0-9a-f-]{36}\.[a-z0-9]+$/;
-
-/** 形式ごとの先頭バイト（申告と中身が違うものを弾く） */
-const MAGIC: Record<AssetContentType, number[]> = {
-  "model/gltf-binary": [0x67, 0x6c, 0x54, 0x46], // "glTF"
-  "image/png": [0x89, 0x50, 0x4e, 0x47],
-  "image/jpeg": [0xff, 0xd8, 0xff],
-  "image/ktx2": [0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb],
-};
+/** GLB の先頭バイト "glTF"（申告と中身が違うものを弾く） */
+const GLB_MAGIC = [0x67, 0x6c, 0x54, 0x46];
 
 export function registerRoutes(app: OpenAPIHono, deps: ApiDeps) {
   const { db, game, storage, signer, maps } = deps;
+  /** 外から見たこの環境の URL（…/a-kun-01 まで） */
+  const base = (c: Context) => externalBase(c.req.raw, deps);
 
   app.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", {
     type: "http",
@@ -200,7 +185,7 @@ export function registerRoutes(app: OpenAPIHono, deps: ApiDeps) {
       const { id: sessionId } = c.req.valid("param");
       const { state, me } = await game.requireParticipant(sessionId, userId);
       return c.json(
-        { round: state.round, seq: state.seq, timestamp: Date.now(), ...game.snapshotPayload(state, me) },
+        { round: state.round, seq: state.seq, timestamp: Date.now(), ...game.snapshotPayload(state, me, base(c)) },
         200,
       );
     },
@@ -284,53 +269,12 @@ export function registerRoutes(app: OpenAPIHono, deps: ApiDeps) {
     }),
     async (c) => {
       const userId = await requireUser(c, deps);
-      const { sessionId, contentType, sizeBytes } = c.req.valid("json");
-      const { me } = await game.requireParticipant(sessionId, userId);
-      const key = `sessions/${sessionId}/assets/${crypto.randomUUID()}.${ASSET_CONTENT_TYPES[contentType]}`;
-      const exp = Math.floor(Date.now() / 1000) + UPLOAD_URL_TTL_SECONDS;
-      const q = signer.uploadQuery({ key, exp, contentType, size: sizeBytes, ownerPlayerId: me.playerId });
-      return c.json(
-        {
-          assetKey: key,
-          uploadUrl: `${externalBase(c, deps)}/v1/storage/${key}?${q}`,
-          method: "PUT" as const,
-          headers: { "Content-Type": contentType },
-          expiresAt: new Date(exp * 1000).toISOString(),
-        },
-        201,
-      );
+      const { sessionId, sizeBytes } = c.req.valid("json");
+      return c.json(await game.issueUpload(sessionId, userId, sizeBytes, base(c)), 201);
     },
   );
 
-  // ---- GET /v1/assets/download-url ----
-  app.openapi(
-    createRoute({
-      method: "get",
-      path: "/v1/assets/download-url",
-      summary: "assetKey をダウンロード用の署名 URL に引き換える（そのセッションの参加者だけ）",
-      security,
-      request: { query: AssetDownloadQuerySchema },
-      responses: { 200: json(AssetDownloadResponseSchema, "OK"), ...errors(400, 401, 403, 404) },
-    }),
-    async (c) => {
-      const userId = await requireUser(c, deps);
-      const { key } = c.req.valid("query");
-      const m = ASSET_KEY.exec(key);
-      if (!m) throw new ApiError(400, "INVALID_ASSET_KEY", "Not an asset key.");
-      await game.requireParticipant(m[1]!, userId);
-      if (!(await storage.head(key))) throw new ApiError(404, "ASSET_NOT_FOUND", "Asset not found.");
-      const exp = Math.floor(Date.now() / 1000) + DOWNLOAD_URL_TTL_SECONDS;
-      return c.json(
-        {
-          url: `${externalBase(c, deps)}/v1/storage/${key}?${signer.downloadQuery({ key, exp })}`,
-          expiresAt: new Date(exp * 1000).toISOString(),
-        },
-        200,
-      );
-    },
-  );
-
-  // ---- 署名付き URL の先（OpenAPI には載せない。URL は上の2つが返す） ----
+  // ---- 署名付き URL の先（S3 を設定していないとき、サーバー自身が受ける。OpenAPI には載せない） ----
   const storageKey = (c: Context) => decodeURIComponent(c.req.path.slice("/v1/storage/".length));
 
   app.put("/v1/storage/*", async (c) => {
@@ -349,8 +293,7 @@ export function registerRoutes(app: OpenAPIHono, deps: ApiDeps) {
     if (bytes.byteLength !== grant.size) {
       throw new ApiError(400, "SIZE_MISMATCH", `The body must be ${grant.size} bytes (got ${bytes.byteLength}).`);
     }
-    const magic = MAGIC[grant.contentType as AssetContentType];
-    if (!magic || magic.some((b, i) => bytes[i] !== b)) {
+    if (grant.contentType !== ASSET_CONTENT_TYPE || GLB_MAGIC.some((b, i) => bytes[i] !== b)) {
       throw new ApiError(400, "INVALID_ASSET", `The body is not ${grant.contentType}.`);
     }
     const created = await storage.putNew(key, bytes, {
@@ -476,7 +419,7 @@ export function registerRoutes(app: OpenAPIHono, deps: ApiDeps) {
         {
           mapId,
           name: m.def.name,
-          modelUrl: `${externalBase(c, deps)}/v1/maps/${mapId}/model.glb`,
+          modelUrl: `${base(c)}/v1/maps/${mapId}/model.glb`,
           transform: m.def.transform,
         },
         200,

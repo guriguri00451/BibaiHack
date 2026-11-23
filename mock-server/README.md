@@ -8,5 +8,5 @@ Seeker の同期オブジェクト表示を確認するためのモック（仕�
 npm install && npm start      # ws://0.0.0.0:8787/v1/ws
 ```
 
-実機から繋ぐときは `SyncedObjectsController` の `wsUrl` / `restBaseUrl` を `localhost` ではなく PC の LAN IP にする。
-`/v1/assets/download-url` の応答形は仮置き（実サーバーと未合意）。
+実機から繋ぐときは、ゲーム進行側が `SyncConnection.FromBaseUrl("http://<PCのLAN IP>:8787", sessionId, token)` を `SeekerArController.StartSync` に渡す（`localhost` は端末自身を指す）。モックは任意のトークンを受け付ける。
+GLB の URL は snapshot の `assetUrl` に載せる（実サーバーは期限付き署名URL、モックはこのサーバー自身の `/files/...`）。

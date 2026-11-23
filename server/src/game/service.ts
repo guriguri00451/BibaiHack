@@ -1,11 +1,12 @@
 import { and, asc, eq, ne, sql } from "drizzle-orm";
 import type { Transform } from "../contracts/transform.ts";
 import { normalizeTransform } from "../contracts/transform.ts";
-import type { FinishReason, ServerMessage, SnapshotPayload } from "../contracts/ws.ts";
+import type { FinishReason, PublicObject, ServerMessage, SnapshotPayload } from "../contracts/ws.ts";
 import type { Db } from "../db/client.ts";
 import { gameObjects, gamePlayers, gameSessions, users } from "../db/schema.ts";
 import { ApiError } from "../http/errors.ts";
 import type { EventLog } from "../log/event-log.ts";
+import type { AssetStorage } from "../storage/assets.ts";
 import type { ObjectStorage } from "../storage/storage.ts";
 import type { Hub } from "./hub.ts";
 import {
@@ -18,9 +19,12 @@ import {
   withLock,
 } from "./registry.ts";
 import {
+  ASSET_CONTENT_TYPE,
   CAPTURE_COOLDOWN_MS,
   CAPTURE_SCORE,
   DEFAULT_PLAYING_SECONDS,
+  DOWNLOAD_URL_TTL_SECONDS,
+  UPLOAD_URL_TTL_SECONDS,
   MAX_OBJECTS_PER_PLAYER_ROUND,
   MISS_SCORE,
   SURVIVE_SCORE,
@@ -44,6 +48,11 @@ export class GameService {
   private readonly snapshotTimer: ReturnType<typeof setInterval>;
   /** objectId / playerId → 最後に Transform をログへ書いた時刻 */
   private readonly lastTransformLog = new Map<string, number>();
+  /**
+   * assetKey → アップロード URL を渡した相手と申告した大きさ。
+   * 所有者を残せない置き場（S3）でも、オブジェクト登録のときに所有者・大きさを確かめるため（再起動で消える）
+   */
+  private readonly uploadGrants = new Map<string, { playerId: string; sizeBytes: number; expiresAt: number }>();
   private disposed = false;
 
   constructor(
@@ -51,6 +60,7 @@ export class GameService {
     readonly registry: GameRegistry,
     readonly hub: Hub,
     readonly storage: ObjectStorage,
+    readonly assets: AssetStorage,
     readonly log: EventLog,
   ) {
     registry.onLoad = async (state) => {
@@ -125,11 +135,18 @@ export class GameService {
     };
   }
 
+  /** 受け手に合わせたオブジェクトに、そのまま GET できる assetUrl を付ける。見せてはいけなければ null */
+  private wireObject(state: GameState, viewer: PlayerState, o: ObjectState, baseUrl?: string): PublicObject | null {
+    const view = publicObject(state, viewer, o);
+    if (!view) return null;
+    return { ...view, assetUrl: this.assets.presignDownload(o.assetKey, DOWNLOAD_URL_TTL_SECONDS, baseUrl) };
+  }
+
   /** 受け手に見せてよい最新状態（WS の session.snapshot と GET /state で同じもの） */
-  snapshotPayload(state: GameState, me: PlayerState): SnapshotPayload {
+  snapshotPayload(state: GameState, me: PlayerState, baseUrl?: string): SnapshotPayload {
     const objects = [];
     for (const o of state.objects.values()) {
-      const view = publicObject(state, me, o);
+      const view = this.wireObject(state, me, o, baseUrl);
       if (view) objects.push(view);
     }
     return {
@@ -155,22 +172,46 @@ export class GameService {
     };
   }
 
-  snapshotMessage(state: GameState, me: PlayerState): ServerMessage {
+  snapshotMessage(state: GameState, me: PlayerState, baseUrl?: string): ServerMessage {
     return {
       type: "session.snapshot",
       round: state.round,
       seq: state.seq,
       timestamp: Date.now(),
-      payload: this.snapshotPayload(state, me),
+      payload: this.snapshotPayload(state, me, baseUrl),
     };
   }
 
   /** 繋いでいる全員に、それぞれに見せてよい snapshot を送り直す */
   private pushSnapshots(state: GameState) {
-    this.hub.fanout(state.sessionId, (pid) => {
+    this.hub.fanout(state.sessionId, (pid, baseUrl) => {
       const p = state.players.get(pid);
-      return p ? this.snapshotMessage(state, p) : null;
+      return p ? this.snapshotMessage(state, p, baseUrl) : null;
     });
+  }
+
+  // ================= アセット =================
+
+  /** POST /v1/assets/uploads。毎回新しいキー（仕様書「過去のアセットは上書きせず新規キーを発行」） */
+  async issueUpload(sessionId: string, userId: string, sizeBytes: number, baseUrl?: string) {
+    const { me } = await this.requireParticipant(sessionId, userId);
+    const assetKey = `sessions/${sessionId}/assets/${crypto.randomUUID()}.glb`;
+    const expiresAt = Date.now() + UPLOAD_URL_TTL_SECONDS * 1000;
+    const uploadUrl = this.assets.presignUpload(assetKey, ASSET_CONTENT_TYPE, UPLOAD_URL_TTL_SECONDS, {
+      sizeBytes,
+      ownerPlayerId: me.playerId,
+      baseUrl,
+    });
+    // 期限切れの記録は掃除する（アップロード済みのものは置き場の meta / stat で確かめられる）
+    for (const [k, g] of this.uploadGrants) if (g.expiresAt + 24 * 3600_000 < Date.now()) this.uploadGrants.delete(k);
+    this.uploadGrants.set(assetKey, { playerId: me.playerId, sizeBytes, expiresAt });
+    return {
+      assetKey,
+      uploadUrl,
+      method: "PUT" as const,
+      headers: { "Content-Type": ASSET_CONTENT_TYPE },
+      expiresAt: new Date(expiresAt).toISOString(),
+    };
   }
 
   // ================= 参加・接続 =================
@@ -425,26 +466,36 @@ export class GameService {
     if (state.status !== "preparing" && state.status !== "playing") {
       throw new ApiError(409, "INVALID_GAME_PHASE", "This action is not allowed in the current phase.");
     }
-    if (me.role !== "hider") throw new ApiError(403, "NOT_A_HIDER", "Only hiders can do this.");
+    if (me.role !== "hider") throw new ApiError(403, "FORBIDDEN_ROLE", "Only hiders can edit objects.");
     if (me.isCaught) throw new ApiError(409, "PLAYER_CAUGHT", "You were caught in this round.");
   }
 
   private requireOwnObject(state: GameState, me: PlayerState, objectId: string): ObjectState {
     const o = state.objects.get(objectId);
     if (!o) throw new ApiError(404, "OBJECT_NOT_FOUND", "Object not found in the current round.");
-    if (o.playerId !== me.playerId) throw new ApiError(403, "NOT_OWNER", "This object belongs to another player.");
+    if (o.playerId !== me.playerId) throw new ApiError(403, "NOT_OBJECT_OWNER", "You do not own this object.");
     return o;
   }
 
-  /** assetKey がこのセッションの、この人が上げた、確認済みの GLB か */
+  /**
+   * assetKey がこのセッションの、この人が上げた、アップロード済みの GLB か。
+   * 置き場が stat を持たない（テストの差し替えなど）ときは、分かる範囲（セッション・渡した相手）だけ確かめる
+   */
   private async requireAsset(state: GameState, me: PlayerState, assetKey: string) {
     if (!assetKey.startsWith(`sessions/${state.sessionId}/assets/`)) {
-      throw new ApiError(400, "INVALID_ASSET", "The asset does not belong to this session.");
+      throw new ApiError(400, "ASSET_NOT_IN_SESSION", "assetKey belongs to a different session.");
     }
-    const meta = await this.storage.head(assetKey);
-    if (!meta) throw new ApiError(400, "ASSET_NOT_UPLOADED", "The asset has not been uploaded.");
-    if (meta.ownerPlayerId !== me.playerId) throw new ApiError(403, "NOT_OWNER", "The asset was uploaded by another player.");
-    if (meta.contentType !== "model/gltf-binary") {
+    const grant = this.uploadGrants.get(assetKey);
+    const stat = this.assets.stat ? await this.assets.stat(assetKey) : undefined;
+    if (stat === null) throw new ApiError(400, "ASSET_NOT_UPLOADED", "The asset has not been uploaded.");
+    const owner = stat?.ownerPlayerId ?? grant?.playerId;
+    if (owner && owner !== me.playerId) {
+      throw new ApiError(403, "NOT_OBJECT_OWNER", "The asset was uploaded by another player.");
+    }
+    if (stat && grant && stat.size !== grant.sizeBytes) {
+      throw new ApiError(400, "ASSET_SIZE_MISMATCH", `The uploaded asset is not ${grant.sizeBytes} bytes.`);
+    }
+    if (stat?.contentType && stat.contentType.split(";")[0] !== ASSET_CONTENT_TYPE) {
       throw new ApiError(400, "INVALID_ASSET", "Objects need a model/gltf-binary asset.");
     }
   }
@@ -473,11 +524,11 @@ export class GameService {
     const timestamp = Date.now();
     this.hub.fanout(
       state.sessionId,
-      (pid) => {
+      (pid, baseUrl) => {
         const viewer = state.players.get(pid);
         if (!viewer) return null;
         if (secretOnly && viewer.role !== "hider" && state.status !== "finished") return null;
-        const payload = publicObject(state, viewer, o);
+        const payload = this.wireObject(state, viewer, o, baseUrl);
         return payload ? { type, round: state.round, seq, timestamp, payload } : null;
       },
       except ?? undefined,
@@ -622,7 +673,7 @@ export class GameService {
   async capture(sessionId: string, userId: string, objectId: string) {
     const { state, me } = await this.requireParticipant(sessionId, userId);
     return withLock(state, async () => {
-      if (me.role !== "seeker") throw new ApiError(403, "NOT_A_SEEKER", "Only seekers can capture.");
+      if (me.role !== "seeker") throw new ApiError(403, "FORBIDDEN_ROLE", "Only seekers can capture.");
       if (state.status !== "playing") {
         throw new ApiError(409, "INVALID_GAME_PHASE", "Captures are only allowed while playing.");
       }

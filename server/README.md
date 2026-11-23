@@ -20,7 +20,8 @@ bun run typecheck
 | `PGLITE_DIR` | なし（メモリ） | PGlite の保存先 |
 | `BASE_PATH` | なし | この環境の URL の前置き（例 `/a-kun-01`）。前置きの無いリクエストは 404 |
 | `PUBLIC_URL` | `http://localhost:<PORT>` | 外から見た URL。`BASE_PATH` を足して OpenAPI の `servers` に載せる。明示したときは署名付き URL・`modelUrl` もこの URL で作る（無ければリクエストの Host から作る） |
-| `STORAGE_DIR` | なし（メモリ） | GLB・ログ・Snapshot の置き場（Object Storage の代わり）。デプロイ先では環境ごとのボリューム `/data/storage` |
+| `STORAGE_DIR` | なし（メモリ） | ログ・Snapshot の置き場。S3 を設定していなければ GLB もここに置く。デプロイ先では環境ごとのボリューム `/data/storage` |
+| `S3_ENDPOINT` `S3_BUCKET` `S3_ACCESS_KEY_ID` `S3_SECRET_ACCESS_KEY` | なし | GLB の置き場（S3 互換。R2 など）。4つそろえる。未設定ならサーバー自身が受ける。一部だけだと起動失敗 |
 
 ## いま動くもの
 
@@ -32,7 +33,7 @@ bun run typecheck
 |---|---|
 | 参加 | `POST /v1/guests`、`POST /v1/sessions`、`POST /v1/sessions/{id}/join`、`GET /v1/sessions/{id}`、`GET /v1/sessions/{id}/state` |
 | ラウンド（ホスト） | `POST /v1/sessions/{id}/rounds/start` · `play` · `finish` |
-| アセット | `POST /v1/assets/uploads` → 返った `uploadUrl` に `PUT`。`GET /v1/assets/download-url?key=` |
+| アセット | `POST /v1/assets/uploads` → 返った `uploadUrl` に `PUT`（GLB のみ・20MB まで・URL は5分有効） |
 | オブジェクト（ドロ） | `POST /v1/sessions/{id}/objects`、`PATCH`・`DELETE …/objects/{objectId}`、`POST …/objects/{objectId}/disguise` |
 | 捕獲（ケイ） | `POST /v1/sessions/{id}/captures` |
 | マップ | `GET /v1/maps/{mapId}`（定義は `maps/<mapId>.json`、GLB は `GET /v1/maps/{mapId}/model.glb` で認証なし） |
@@ -69,8 +70,10 @@ bun run typecheck
 - `rounds/start`・`play`・`finish` は `GET /v1/sessions/{id}` と同じ形を返す。`rounds/start` に `playingSeconds`（任意）を足した
 - オブジェクト API は `{ id, round, assetKey, transform, isDisguise, createdAt, updatedAt }` を返す（仕様書の `{id, round}` に足した）。`DELETE` は 204
 - 捕獲の応答に `score`（ケイの累計）と、当たりなら `caughtPlayerId` を足した
-- 仕様書に無いものを足した：`GET /v1/assets/download-url`（seeker-unity が想定していた形）、`GET /v1/maps/{mapId}/model.glb`、リプレイ API
-- Object Storage はまだ外部に置かず、サーバー自身が署名付き URL（`/v1/storage/...`、期限10分）を配って受ける。サイズ・形式（先頭バイト）・所有者を確かめ、同じキーには書き直させない
+- 仕様書に無いものを足した：`GET /v1/maps/{mapId}/model.glb`、リプレイ API
+- オブジェクトの payload（snapshot の `objects` も同じ）は `{objectId, assetKey, assetUrl, transform}`。ドロと終了後の全員には `ownerPlayerId`・`isDisguise` も付く。`assetUrl` は1時間有効の署名付き GET URL で、クライアントはこれで GLB を直接取る。`assetKey`（永続キー）はキャッシュ・差し替え判定に使う。期限が切れたら再接続（snapshot）か `object.updated` で新しい URL が届く
+- GLB の置き場は S3 を設定していればそちら。無ければサーバー自身が署名付き URL（`/v1/storage/...`）を配って受け、大きさ・形式（先頭バイト）・所有者を確かめ、同じキーには書き直させない。オブジェクト登録のときは、アップロード済みか・申告どおりの大きさか・本人が上げたものかを確かめる
+- エラーコード：役割が違う `FORBIDDEN_ROLE`、他人のオブジェクト `NOT_OBJECT_OWNER`、他のセッションの assetKey `ASSET_NOT_IN_SESSION`、未アップロード `ASSET_NOT_UPLOADED`、フェーズ違い `INVALID_GAME_PHASE`、見つかったドロ `PLAYER_CAUGHT`
 - ログは `sessions/{id}/rounds/{round}/events/{first}-{last}.jsonl`（2秒ごと・ラウンド終了時に書く）、Snapshot は `…/snapshots/{seq}.json`（ラウンド開始・30秒ごと・終了時）。Transform は 1 秒に1件まで間引く
 - WS の C→S メッセージは `payload.requestId` を付けると `command.ack`（失敗なら同じ `requestId` 付きの `error`）が返る
 - 後から参加した人がいると、繋いでいる全員に `session.snapshot` を送り直す（ホストが役割を割り当てられるように）

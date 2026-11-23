@@ -8,6 +8,8 @@ export type WsData = {
   sessionId?: string;
   playerId?: string;
   authTimer?: ReturnType<typeof setTimeout>;
+  /** この接続から見たこの環境の URL（配る assetUrl をそこへ向ける） */
+  baseUrl?: string;
 };
 type Socket = ServerWebSocket<WsData>;
 
@@ -39,13 +41,13 @@ export function createWsHandler(deps: { game: GameService; jwtSecret: string }) 
     ws.data.sessionId = sessionId;
     ws.data.playerId = player.playerId;
 
-    hub.attach(sessionId, player.playerId, ws)?.close(WS_CLOSE.REPLACED, "replaced by a new connection");
+    hub.attach(sessionId, player.playerId, ws, ws.data.baseUrl)?.close(WS_CLOSE.REPLACED, "replaced by a new connection");
 
     player.connected = true;
     // 再接続したら clientSeq は振り出しから数え直してよい
     player.lastClientSeq = -1;
     for (const o of state.objects.values()) if (o.playerId === player.playerId) o.lastClientSeq = -1;
-    send(ws, game.snapshotMessage(state, player));
+    send(ws, game.snapshotMessage(state, player, ws.data.baseUrl));
   }
 
   const websocket: WebSocketHandler<WsData> = {

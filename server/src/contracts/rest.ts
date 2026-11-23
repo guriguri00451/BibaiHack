@@ -1,11 +1,5 @@
 import { z } from "@hono/zod-openapi";
-import {
-  ASSET_CONTENT_TYPES,
-  type AssetContentType,
-  DEFAULT_PLAYING_SECONDS,
-  MAX_ASSET_BYTES,
-  MAX_PHASE_SECONDS,
-} from "../game/rules.ts";
+import { ASSET_CONTENT_TYPE, DEFAULT_PLAYING_SECONDS, MAX_ASSET_BYTES, MAX_PHASE_SECONDS } from "../game/rules.ts";
 import { TransformSchema } from "./transform.ts";
 
 export const ROLES = ["hider", "seeker"] as const;
@@ -113,35 +107,31 @@ export const FinishRoundRequestSchema = z.object({}).openapi("FinishRoundRequest
 
 // ---- アセット（仕様書 5.1） ----
 
-export const AssetContentTypeSchema = z
-  .enum(Object.keys(ASSET_CONTENT_TYPES) as [AssetContentType, ...AssetContentType[]])
-  .openapi("AssetContentType");
+/** 仕様書 5.1 の assetKey。所属セッションはキーの中に入っている */
+export const ASSET_KEY_PATTERN = /^sessions\/([0-9a-f-]{36})\/assets\/[A-Za-z0-9._-]{1,128}\.glb$/;
+
+export const AssetKeySchema = z
+  .string()
+  .regex(ASSET_KEY_PATTERN, "assetKey must look like sessions/<session-id>/assets/<name>.glb")
+  .openapi({ example: "sessions/00000000-0000-4000-8000-000000000000/assets/a.glb" });
 
 export const CreateAssetUploadRequestSchema = z
   .object({
     sessionId: z.uuid(),
-    contentType: AssetContentTypeSchema.openapi({ example: "model/gltf-binary" }),
+    contentType: z.literal(ASSET_CONTENT_TYPE),
     sizeBytes: z.int().min(1).max(MAX_ASSET_BYTES).openapi({ example: 204800 }),
   })
   .openapi("CreateAssetUploadRequest");
 
 export const CreateAssetUploadResponseSchema = z
   .object({
-    assetKey: z.string().openapi({ example: "sessions/<session-id>/assets/<asset-id>.glb" }),
+    assetKey: AssetKeySchema,
     uploadUrl: z.url().describe("この URL へ本体を PUT する。Content-Type と大きさは申告どおりにする"),
     method: z.literal("PUT"),
     headers: z.record(z.string(), z.string()),
     expiresAt: z.iso.datetime(),
   })
   .openapi("CreateAssetUploadResponse");
-
-export const AssetDownloadQuerySchema = z.object({
-  key: z.string().min(1).max(512).openapi({ param: { name: "key", in: "query" } }),
-});
-
-export const AssetDownloadResponseSchema = z
-  .object({ url: z.url(), expiresAt: z.iso.datetime() })
-  .openapi("AssetDownloadResponse");
 
 // ---- オブジェクト（仕様書 5.1） ----
 
@@ -151,11 +141,11 @@ export const ObjectIdParamSchema = z.object({
 });
 
 export const CreateObjectRequestSchema = z
-  .object({ assetKey: z.string().min(1).max(512), transform: TransformSchema })
+  .object({ assetKey: AssetKeySchema, transform: TransformSchema })
   .openapi("CreateObjectRequest");
 
 export const UpdateObjectRequestSchema = z
-  .object({ assetKey: z.string().min(1).max(512).optional(), transform: TransformSchema.optional() })
+  .object({ assetKey: AssetKeySchema.optional(), transform: TransformSchema.optional() })
   .refine((b) => b.assetKey !== undefined || b.transform !== undefined, {
     message: "assetKey か transform のどちらかが必要です",
   })

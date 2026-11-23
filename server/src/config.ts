@@ -1,3 +1,5 @@
+import type { S3Config } from "./storage/assets.ts";
+
 export type Config = {
   port: number;
   /** 指定があれば PostgreSQL に繋ぐ。なければ PGlite（プロセス内の Postgres）を使う */
@@ -16,6 +18,8 @@ export type Config = {
   assetBaseUrl?: string;
   /** GLB・ログ・Snapshot の保存先ディレクトリ。未指定ならメモリ上（再起動で消える） */
   storageDir?: string;
+  /** S3 互換ストレージ（GLB の置き場）。S3_* がそろっていなければ undefined（サーバー自身が受ける） */
+  s3?: S3Config;
 };
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -49,5 +53,17 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     pgliteDir: env.PGLITE_DIR || undefined,
     storageDir: env.STORAGE_DIR || undefined,
     jwtSecret,
+    s3: loadS3Config(env),
   };
+}
+
+function loadS3Config(env: Record<string, string | undefined>): S3Config | undefined {
+  const { S3_ENDPOINT: endpoint, S3_BUCKET: bucket, S3_ACCESS_KEY_ID: accessKeyId, S3_SECRET_ACCESS_KEY: secretAccessKey } = env;
+  const given = [endpoint, bucket, accessKeyId, secretAccessKey];
+  if (given.every((v) => !v)) return undefined;
+  // 一部だけ設定されているのは設定ミス。黙って無効にせず起動時に気づけるようにする
+  if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) {
+    throw new Error("S3_ENDPOINT / S3_BUCKET / S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY はすべて設定してください");
+  }
+  return { endpoint, bucket, accessKeyId, secretAccessKey };
 }

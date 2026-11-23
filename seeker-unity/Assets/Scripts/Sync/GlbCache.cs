@@ -13,20 +13,15 @@ namespace Seeker.Sync
     /// </summary>
     public sealed class GlbCache : IDisposable
     {
-        private readonly IAssetLocator locator;
         private readonly Dictionary<string, Task<GltfImport>> imports = new Dictionary<string, Task<GltfImport>>();
 
-        public GlbCache(IAssetLocator locator)
-        {
-            this.locator = locator;
-        }
-
+        /// <param name="assetUrl">サーバーが payload に載せた署名付きURL。キャッシュ済みなら使わない</param>
         /// <returns>インスタンス化に成功したか</returns>
-        public async Task<bool> InstantiateInto(string assetKey, Transform parent)
+        public async Task<bool> InstantiateInto(string assetKey, string assetUrl, Transform parent)
         {
             if (!imports.TryGetValue(assetKey, out var importTask))
             {
-                importTask = Import(assetKey);
+                importTask = Import(assetUrl);
                 imports[assetKey] = importTask;
             }
 
@@ -45,9 +40,9 @@ namespace Seeker.Sync
             return await import.InstantiateMainSceneAsync(parent);
         }
 
-        private async Task<GltfImport> Import(string assetKey)
+        private static async Task<GltfImport> Import(string url)
         {
-            var url = await locator.ResolveDownloadUrl(assetKey);
+            if (string.IsNullOrEmpty(url)) throw new InvalidOperationException("assetUrl が無い（サーバーのストレージ設定を確認）");
             var import = new GltfImport();
             if (!await import.Load(url)) throw new InvalidOperationException($"glTF の読み込みに失敗 url={url}");
             return import;

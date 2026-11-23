@@ -40,9 +40,14 @@ describe("前置き付きで起動したサーバー", async () => {
   test("署名付き URL・modelUrl にも前置きが付く", async () => {
     const host = await s.guest("U");
     const session = await s.post("/v1/sessions", { mapId: "m" }, host.accessToken);
-    const key = await s.uploadGlb(host.accessToken, session.id); // PUT が通る＝URL が前置き付き
-    const dl = await s.request("GET", `/v1/assets/download-url?key=${key}`, undefined, host.accessToken);
-    expect(dl.body.url.startsWith(`${s.base}/v1/storage/`)).toBe(true);
+    const up = await s.request(
+      "POST",
+      "/v1/assets/uploads",
+      { sessionId: session.id, contentType: "model/gltf-binary", sizeBytes: 64 },
+      host.accessToken,
+    );
+    expect(up.body.uploadUrl.startsWith(`${s.base}/v1/storage/`)).toBe(true);
+    await s.uploadGlb(host.accessToken, session.id); // PUT が通る＝URL が前置き付き
     const map = await s.request("GET", "/v1/maps/bibai-museum", undefined, host.accessToken);
     expect(map.body.modelUrl).toBe(`${s.base}/v1/maps/bibai-museum/model.glb`);
   });

@@ -20,12 +20,10 @@ export const CAPTURE_COOLDOWN_MS = 1_500;
 /** 1人のドロが1ラウンドで置けるオブジェクトの数 */
 export const MAX_OBJECTS_PER_PLAYER_ROUND = 50;
 
-/** アップロードできるアセット */
-export const ASSET_CONTENT_TYPES = {
-  "model/gltf-binary": "glb",
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "image/ktx2": "ktx2",
-} as const;
-export type AssetContentType = keyof typeof ASSET_CONTENT_TYPES;
-export const MAX_ASSET_BYTES = 32 * 1024 * 1024;
+/** アップロードできるアセット（GLB だけ。テクスチャは GLB に埋め込む） */
+export const ASSET_CONTENT_TYPE = "model/gltf-binary";
+export const MAX_ASSET_BYTES = 20 * 1024 * 1024;
+/** 仕様書 9章「署名付きアップロードURLには短い期限」 */
+export const UPLOAD_URL_TTL_SECONDS = 5 * 60;
+/** snapshot・object.* に載せるダウンロード URL の期限。切れたら再接続（snapshot）か object.updated で新しい URL が届く */
+export const DOWNLOAD_URL_TTL_SECONDS = 60 * 60;

@@ -32,14 +32,6 @@ const transformAt = (object, timeSeconds) => {
 const server = http.createServer((request, response) => {
   const base = `http://${request.headers.host}`;
   const url = new URL(request.url, base);
-  if (url.pathname === '/v1/assets/download-url') {
-    // 署名URL取得の代役。本物は期限付きURLを返す
-    const key = url.searchParams.get('key');
-    if (!(key in COLORS)) { response.writeHead(404).end(); return; }
-    response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ url: `${base}/files/${key}` }));
-    return;
-  }
   if (url.pathname.startsWith('/files/')) {
     const key = url.pathname.slice('/files/'.length);
     if (!(key in COLORS)) { response.writeHead(404).end(); return; }
@@ -53,7 +45,9 @@ const server = http.createServer((request, response) => {
 const wss = new WebSocketServer({ server, path: '/v1/ws' });
 const authenticated = new Set();
 
-wss.on('connection', (socket) => {
+wss.on('connection', (socket, request) => {
+  // 本物は期限付き署名URLを assetUrl に載せる。モックは署名なしのこのサーバー自身のURL
+  const assetUrl = (key) => `http://${request.headers.host}/files/${key}`;
   socket.on('message', (raw) => {
     const message = JSON.parse(raw.toString());
     if (message.type !== 'auth') return;
@@ -64,7 +58,7 @@ wss.on('connection', (socket) => {
       status: phase,
       participants: PARTICIPANTS,
       // preparing 中は配置情報を返さない（ドロの位置を漏らさない）
-      objects: phase !== 'playing' ? [] : OBJECTS.map((o) => ({ objectId: o.objectId, assetKey: o.assetKey, transform: transformAt(o, now) })),
+      objects: phase !== 'playing' ? [] : OBJECTS.map((o) => ({ objectId: o.objectId, assetKey: o.assetKey, assetUrl: assetUrl(o.assetKey), transform: transformAt(o, now) })),
     });
   });
   socket.on('close', () => authenticated.delete(socket));

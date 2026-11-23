@@ -9,9 +9,6 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 export type UploadGrant = { key: string; exp: number; contentType: string; size: number; ownerPlayerId: string };
 export type DownloadGrant = { key: string; exp: number };
 
-export const UPLOAD_URL_TTL_SECONDS = 10 * 60;
-export const DOWNLOAD_URL_TTL_SECONDS = 10 * 60;
-
 export class UrlSigner {
   private readonly secret: string;
 
