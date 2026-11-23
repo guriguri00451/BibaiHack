@@ -43,6 +43,9 @@ namespace Seeker.Sync
             client.Start();
         }
 
+        /// <summary>player.transform の JSON を送る。未接続なら捨てる。</summary>
+        public void SendPlayerTransform(string json) => client?.SendText(json);
+
         private void Update()
         {
             client?.DispatchMessages();
