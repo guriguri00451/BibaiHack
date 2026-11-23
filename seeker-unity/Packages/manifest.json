@@ -52,6 +52,7 @@
     "com.unity.visualscripting": "1.9.12",
     "com.unity.xr.arcore": "6.7.1",
     "com.unity.xr.arfoundation": "6.7.1",
-    "com.unity.xr.management": "4.6.1"
+    "com.unity.xr.management": "4.6.1",
+    "org.nesnausk.gaussian-splatting": "https://github.com/aras-p/UnityGaussianSplatting.git?path=/package"
   }
 }
