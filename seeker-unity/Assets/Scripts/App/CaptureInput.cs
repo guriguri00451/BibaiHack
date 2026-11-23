@@ -57,12 +57,15 @@ namespace Seeker.App
             isSending = true;
             cooldown.MarkSent();
             var objectId = view.ObjectId;
+            var round = syncedObjects.Session.Round;
             view.SetHighlighted(true);
             var result = await CaptureClient.SendAsync(syncedObjects.Connection, objectId);
             // 待っている間にオブジェクトが消えることがある（他のケイに捕獲された等）
             if (view != null) view.SetHighlighted(false);
             if (result.RetryAfterSeconds.HasValue) cooldown.ApplyRetryAfter(result.RetryAfterSeconds.Value);
             isSending = false;
+            // 応答待ちの間にサーバーがラウンドを進めていたら（サイクル）、前ラウンドの結果を次のラウンドに出さない
+            if (syncedObjects.Session.Round != round) return;
             Captured?.Invoke(new CaptureOutcome(objectId, result));
         }
 

@@ -48,5 +48,13 @@ namespace Seeker.Sync
         }
 
         public static bool IsWarning(long remainingMs) => remainingMs <= WarningSeconds * 1000L;
+
+        /// <summary>finished 画面の次ラウンド案内。remainingMs が null ならサイクル外（ホストが rounds/start するまで待つ）。</summary>
+        public static string FormatNextRound(long? remainingMs)
+        {
+            if (!remainingMs.HasValue) return "ホストの開始を待っています";
+            var seconds = (Math.Max(0L, remainingMs.Value) + 999) / 1000;
+            return seconds > 0 ? $"次のラウンドまで {seconds} 秒" : "まもなく次のラウンドが始まります";
+        }
     }
 }

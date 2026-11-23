@@ -70,6 +70,25 @@ namespace Seeker.Ar.Tests
         }
 
         [Test]
+        public void FormatNextRound_ShowsHostWait_WhenNotScheduled()
+        {
+            Assert.That(TimerFormat.FormatNextRound(null), Is.EqualTo("ホストの開始を待っています"));
+        }
+
+        [Test]
+        public void FormatNextRound_ShowsSecondsRoundedUp()
+        {
+            Assert.That(TimerFormat.FormatNextRound(4_200), Is.EqualTo("次のラウンドまで 5 秒"));
+        }
+
+        [Test]
+        public void FormatNextRound_ShowsStartingSoon_WhenTimeIsUp()
+        {
+            // 0 秒でもクライアントからは進めない。サーバーの phase_changed を待つ間の文言
+            Assert.That(TimerFormat.FormatNextRound(0), Is.EqualTo("まもなく次のラウンドが始まります"));
+        }
+
+        [Test]
         public void ServerMessage_ReadsTimestamp()
         {
             var message = ServerMessage.Parse("{\"type\":\"x\",\"timestamp\":123,\"payload\":{}}");

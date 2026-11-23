@@ -40,9 +40,16 @@ namespace Seeker.Sync
         public GamePhase Phase { get; private set; } = GamePhase.Waiting;
         public long Round { get; private set; } = long.MinValue;
         public GameResult Result { get; private set; }
-        /// <summary>現フェーズの終了時刻（Unix ms、サーバー時刻）。waiting / finished では null。</summary>
+        /// <summary>現フェーズの終了時刻（Unix ms、サーバー時刻）。waiting では null。finished はサイクル中だけ次のラウンドの開始時刻。</summary>
         public long? PhaseEndsAtMs { get; private set; }
         public IReadOnlyList<string> Participants => participants;
+
+        /// <summary>
+        /// サイクル中（rounds/start の resultSeconds）で、サーバーが次のラウンドを自分で始める予定があるか。
+        /// cycle は REST の SessionDetail にしか載らないので、finished の phaseEndsAt（= 次のラウンドの開始時刻）の有無で見分ける。
+        /// 停止すると finished のまま phaseEndsAt が null の snapshot が届き、false に戻る。
+        /// </summary>
+        public bool IsNextRoundScheduled => Phase == GamePhase.Finished && PhaseEndsAtMs.HasValue;
 
         /// <summary>表示に影響する変化があったら true。</summary>
         public bool Apply(ServerMessage message)
