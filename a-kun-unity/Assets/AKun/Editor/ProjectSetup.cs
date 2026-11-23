@@ -192,7 +192,8 @@ namespace AKun.EditorTools
             Enable<ARCameraFeature>();
             Enable<HandTracking>();
             Enable<HandInteractionProfile>();
-            settings.renderMode = OpenXRSettings.RenderMode.SinglePassInstanced;
+            // マルチパス: Gaussian Splat の URP Feature は目ごとに描くので、Single Pass Instanced だと片目の絵が両目に出て、頭の動きと合わなくなる
+            settings.renderMode = OpenXRSettings.RenderMode.MultiPass;
             EditorUtility.SetDirty(settings);
             foreach (var f in settings.GetFeatures())
                 if (f.enabled) Debug.Log($"[setup] OpenXR feature on: {f.GetType().Name}");

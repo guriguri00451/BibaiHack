@@ -849,7 +849,7 @@ namespace AKun
             if (!map.IsLoaded || map.LoadedId != want) throw new Exception("ステージが替わりました。もう一度「投稿する」を押してください");
             if (!mapPlaced) { PlaceMapOnTable(); mapPlaced = true; }
             if (spot != null) map.SetSpotLocal(spot.Value.pos, spot.Value.rot);
-            else map.ClearSpot();
+            else map.SetSpotLocal(map.LocalBounds.center, Quaternion.identity); // 最初はマップの真ん中。つまんで動かす
             map.SetSpotMesh(shape);
             SetHiding(true);
         }
@@ -973,41 +973,34 @@ namespace AKun
             PlaceMapOnTable();
         }
 
-        // 隠す場所を選んでいる間の手: レイがマップに当たっていればそこを指し、つまむとそこに隠す (つまんだまま動かすと付いてくる)。
-        // 何もない所をつまむとマップを動かす (両手で回転・拡大縮小)
+        // 隠す場所を選んでいる間の手: モデル (隠す形の見本) をつまんで動かし、離した所に置く。
+        // Gaussian Splat には面が無いので、面に当てずに、手の位置にそのまま置く (向きは変えない)。
+        // モデルから離れた所をつまむとマップを動かす (両手で回転・拡大縮小)
+        const float HOLD_MIN_RADIUS = 0.06f; // m。モデルが小さくても、これくらいの範囲でつまめる
         void UpdateHideHand(int hi, HandState hs, bool hasRay, Vector3 o, Vector3 d, float pinchDist)
         {
-            MapView.RayHit hit = default;
-            bool onMap = hasRay && map.Raycast(o, d, out hit);
             if (!hs.pinching && pinchDist < PINCH_ON)
             {
                 hs.pinching = true;
                 manipDirty = true;
-                hs.pinchMode = onMap ? "spot" : "move";
-                if (onMap)
+                bool near = map.SpotGrabSphere(out var c, out var r) && Vector3.Distance(hs.pinchPos, c) < Mathf.Max(r * 1.2f, HOLD_MIN_RADIUS);
+                hs.pinchMode = near ? "hold" : "move";
+                if (near)
                 {
-                    // 隠す場所を指した: 小さな輪と、ぽんという音
-                    Sfx.Play("pop", hit.point, 0.5f, 1.4f);
-                    fx.Ripple(hit.point + hit.normal * 0.002f, hit.normal, new Color(1, 0.84f, 0.31f, 0.9f), 0.01f, 0.05f, 0.4f);
+                    // モデルをつまんだ: 小さな輪と、ぽんという音
+                    hs.holdOffset = map.SpotPosition - map.root.InverseTransformPoint(hs.pinchPos);
+                    Sfx.Play("pop", hs.pinchPos, 0.5f, 1.4f);
+                    fx.Ripple(c, Vector3.up, new Color(1, 0.84f, 0.31f, 0.9f), 0.01f, Mathf.Max(r, 0.03f), 0.4f);
                 }
             }
             else if (hs.pinching && pinchDist > PINCH_OFF)
             {
-                if (hs.pinchMode == "spot" && map.HasSpot) Sfx.Play("tick", hs.pinchPos, 0.6f);
+                if (hs.pinchMode == "hold") Sfx.Play("tick", hs.pinchPos, 0.6f); // 置いた
                 EndPinch(hs);
             }
             if (hs.pinching && hs.pinchMode == "move") { movers.Add(hs); return; }
-            if (!onMap) return;
-            if (hs.pinching && hs.pinchMode == "spot") map.SetSpot(hit, d);
-            // レイの線と、当たった所の点
-            var line = pointers[hi].line;
-            line.enabled = true;
-            line.SetPosition(0, o + Vector3.down * 0.02f);
-            line.SetPosition(1, hit.point);
-            brushMat[hi].SetColor("_BaseColor", hs.pinching ? new Color(1, 0.84f, 0.31f, 0.9f) : new Color(1, 1, 1, 0.7f));
-            brushCursor[hi].position = hit.point;
-            brushCursor[hi].localScale = Vector3.one * 0.01f;
-            brushCursor[hi].gameObject.SetActive(true);
+            if (hs.pinching && hs.pinchMode == "hold")
+                map.SetSpotLocal(map.root.InverseTransformPoint(hs.pinchPos) + hs.holdOffset, map.SpotRotation);
         }
 
         // ================= 投稿・化けるの演出 (Post から呼ぶ) =================

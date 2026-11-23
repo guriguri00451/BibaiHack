@@ -111,8 +111,9 @@ namespace AKun
 
         // つまむ
         public bool pinching;
-        public string pinchMode; // "pull" / "move" / "none"
+        public string pinchMode; // "pull" / "move" / "hold" (隠す場所のモデルを持っている) / "none"
         public Vector3 lastG, grabOffset;
+        public Vector3 holdOffset; // 持っているモデルの位置 - つまんだ点 (マップの root から見た値)
 
         // さわる・塗る
         public bool touching, contact;

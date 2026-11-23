@@ -56,7 +56,7 @@ adb install -r a-kun-unity/Builds/a-kun-clay.apk
 
 - Player: Android、IL2CPP / ARM64、Vulkan、Linear、最小 API 29、GameActivity、Resizeable Activity、Run In Background、Input System
 - URP: `Assets/AKun/Settings/` に URP の設定を作る (HDR なし、ポストエフェクトなし、MSAA 4x)
-- XR: Android で OpenXR、機能は Android XR Support / Session / Camera (パススルー) / Hand Tracking / Hand Interaction Profile。描き方は Single Pass Instanced
+- XR: Android で OpenXR、機能は Android XR Support / Session / Camera (パススルー) / Hand Tracking / Hand Interaction Profile。描き方は Multi Pass (Gaussian Splat の URP Feature が目ごとに描くため)
 - シーンを作ってビルド設定に入れる
 
 ## 使い方
