@@ -44,6 +44,9 @@ namespace Seeker.App
             if (syncedObjects != null) syncedObjects.SessionChanged -= RenderPhase;
         }
 
+        // サーバー時刻補正後の残り時間を毎フレーム描く。0 でも勝手に遷移せず phase_changed を待つ
+        private void Update() => phasePanels.RenderTimer(syncedObjects.Session, syncedObjects.Clock);
+
         private void RenderPhase() => phasePanels.Render(syncedObjects.Session);
 
         private async void Start()

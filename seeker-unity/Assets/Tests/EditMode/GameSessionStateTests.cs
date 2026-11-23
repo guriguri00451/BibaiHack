@@ -111,5 +111,73 @@ namespace Seeker.Ar.Tests
 
             Assert.That(state.Phase, Is.EqualTo(GamePhase.Waiting));
         }
+
+        private static ServerMessage Raw(string json) => ServerMessage.Parse(json);
+
+        private const string RealSnapshot =
+            "{\"type\":\"session.snapshot\",\"round\":1,\"seq\":0,\"timestamp\":1000,\"payload\":{\"session\":{\"status\":\"playing\",\"round\":1,\"phaseEndsAt\":\"2026-01-01T00:00:30.000Z\"},\"players\":[],\"objects\":[]}}";
+
+        [Test]
+        public void Apply_ReadsPhase_FromSnapshotSessionStatus()
+        {
+            var state = new GameSessionState();
+
+            state.Apply(Raw(RealSnapshot));
+
+            Assert.That(state.Phase, Is.EqualTo(GamePhase.Playing));
+        }
+
+        [Test]
+        public void Apply_ReadsPhaseEndsAt_FromSnapshot()
+        {
+            var state = new GameSessionState();
+
+            state.Apply(Raw(RealSnapshot));
+
+            Assert.That(state.PhaseEndsAtMs, Is.EqualTo(1767225630000L));
+        }
+
+        [Test]
+        public void Apply_ReadsPhaseEndsAt_FromPhaseChanged()
+        {
+            var state = new GameSessionState();
+
+            state.Apply(Message("session.phase_changed", 1, "{\"status\":\"preparing\",\"phaseEndsAt\":\"2026-01-01T00:01:00.000Z\"}"));
+
+            Assert.That(state.PhaseEndsAtMs, Is.EqualTo(1767225660000L));
+        }
+
+        [Test]
+        public void Apply_ClearsPhaseEndsAt_WhenFinishedHasNull()
+        {
+            var state = new GameSessionState();
+            state.Apply(Raw(RealSnapshot));
+
+            state.Apply(Message("session.phase_changed", 1, "{\"status\":\"finished\",\"phaseEndsAt\":null}"));
+
+            Assert.That(state.PhaseEndsAtMs, Is.Null);
+        }
+
+        [Test]
+        public void Apply_PhaseEndsAtIsNull_OnWaitingSnapshot()
+        {
+            var state = new GameSessionState();
+
+            state.Apply(Raw("{\"type\":\"session.snapshot\",\"round\":1,\"seq\":0,\"timestamp\":1,\"payload\":{\"session\":{\"status\":\"waiting\",\"round\":1,\"phaseEndsAt\":null}}}"));
+
+            Assert.That(state.PhaseEndsAtMs, Is.Null);
+        }
+
+        [Test]
+        public void Apply_DoesNotChangePhase_WhenRemainingReachesZero()
+        {
+            var state = new GameSessionState();
+            state.Apply(Raw(RealSnapshot));
+            var clock = new ServerClock(() => 1767225630000L + 5000);
+
+            clock.RemainingMs(state.PhaseEndsAtMs.Value);
+
+            Assert.That(state.Phase, Is.EqualTo(GamePhase.Playing));
+        }
     }
 }

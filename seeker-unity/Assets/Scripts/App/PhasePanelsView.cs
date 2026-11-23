@@ -17,12 +17,18 @@ namespace Seeker.App
         private readonly Dictionary<GamePhase, GameObject> panels = new Dictionary<GamePhase, GameObject>();
         private readonly Text waitingBody;
         private readonly Text finishedBody;
+        private readonly TimerHudView playingTimer;
+        private readonly TimerHudView preparingTimer;
 
         public PhasePanelsView(Transform canvas, GameObject playingHud)
         {
             panels[GamePhase.Playing] = playingHud;
             waitingBody = CreateFullScreenPanel(canvas, GamePhase.Waiting, "参加者を待っています");
-            CreateFullScreenPanel(canvas, GamePhase.Preparing, "ドロが隠れています").text = "ドロが隠れています\nしばらくお待ちください";
+            var preparingBody = CreateFullScreenPanel(canvas, GamePhase.Preparing, "ドロが隠れています");
+            preparingBody.text = "ドロが隠れています\nしばらくお待ちください";
+            preparingTimer = new TimerHudView(CreateTimerText(preparingBody.transform.parent, new Vector2(0.5f, 0.3f), 120));
+            // playing HUD（ステータス帯）の直下に出す。帯は上端から 120 + 高さ 120 の位置
+            playingTimer = new TimerHudView(CreateTimerText(playingHud.transform, new Vector2(0.5f, 0f), 96));
             finishedBody = CreateFullScreenPanel(canvas, GamePhase.Finished, "結果");
         }
 
@@ -38,6 +44,33 @@ namespace Seeker.App
                     finishedBody.text = BuildResultText(session.Result);
                     break;
             }
+        }
+
+        /// <summary>毎フレーム呼ぶ。残り時間の表示だけを更新する（フェーズ遷移はしない）。</summary>
+        public void RenderTimer(GameSessionState session, ServerClock clock)
+        {
+            if (session.Phase == GamePhase.Playing) playingTimer.Render(session, clock);
+            else if (session.Phase == GamePhase.Preparing) preparingTimer.Render(session, clock);
+        }
+
+        private static Text CreateTimerText(Transform parent, Vector2 anchor, int fontSize)
+        {
+            var go = new GameObject("Timer", typeof(RectTransform), typeof(Text));
+            go.transform.SetParent(parent, false);
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = rect.anchorMax = anchor;
+            rect.pivot = new Vector2(0.5f, 1f);
+            rect.anchoredPosition = new Vector2(0f, -10f);
+            rect.sizeDelta = new Vector2(600f, fontSize * 1.4f);
+            var text = go.GetComponent<Text>();
+            text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            text.fontSize = fontSize;
+            text.fontStyle = FontStyle.Bold;
+            text.alignment = TextAnchor.MiddleCenter;
+            text.color = Color.white;
+            // 親（半透明の黒帯）の外へ出てもタップを奪わない
+            text.raycastTarget = false;
+            return text;
         }
 
         public static string BuildWaitingText(IReadOnlyList<string> participants)

@@ -27,9 +27,11 @@ namespace Seeker.Sync
 
     /// <summary>
     /// セッションのフェーズ・ラウンド・参加者・結果の最新状態。UI から切り離した純ロジック。
-    /// payload の形は仕様に明記が無いため、ここに閉じ込めている。想定:
-    ///   session.snapshot / session.phase_changed: { status, round?, participants?: [name | { name|displayName }], result?: { captured, score } }
-    /// round はメッセージ直下を優先し、無ければ payload を見る。
+    /// 形は server/src/contracts/ws.ts が正:
+    ///   session.snapshot:      payload.session = { status, round, phaseEndsAt }
+    ///   session.phase_changed: payload = { status, round, phaseEndsAt, result? }
+    /// participants は仕様に明記が無いため、payload.session → payload 直下の順に探す想定。
+    /// round はメッセージ直下を優先し、無ければ status と同じ階層を見る。
     /// </summary>
     public sealed class GameSessionState
     {
@@ -38,6 +40,8 @@ namespace Seeker.Sync
         public GamePhase Phase { get; private set; } = GamePhase.Waiting;
         public long Round { get; private set; } = long.MinValue;
         public GameResult Result { get; private set; }
+        /// <summary>現フェーズの終了時刻（Unix ms、サーバー時刻）。waiting / finished では null。</summary>
+        public long? PhaseEndsAtMs { get; private set; }
         public IReadOnlyList<string> Participants => participants;
 
         /// <summary>表示に影響する変化があったら true。</summary>
@@ -46,7 +50,9 @@ namespace Seeker.Sync
             var isSnapshot = message.Type == "session.snapshot";
             if (!isSnapshot && message.Type != "session.phase_changed") return false;
 
-            var round = message.Round ?? (long?)message.Payload["round"];
+            // snapshot は payload.session 配下。phase_changed は payload 直下
+            var source = isSnapshot && message.Payload["session"] is JObject session ? session : message.Payload;
+            var round = message.Round ?? (long?)source["round"];
             // 古いラウンドの遅延メッセージで、進んだ画面を巻き戻さない（snapshot は再接続時の正なので常に採用）
             if (!isSnapshot && round.HasValue && round.Value < Round) return false;
 
@@ -57,18 +63,33 @@ namespace Seeker.Sync
                 Round = round.Value;
                 participants.Clear();
                 Result = default;
+                PhaseEndsAtMs = null;
                 isChanged = true;
             }
 
-            if (TryParsePhase((string)message.Payload["status"], out var phase) && phase != Phase)
+            if (TryParsePhase((string)source["status"], out var phase) && phase != Phase)
             {
                 Phase = phase;
                 isChanged = true;
             }
 
-            isChanged |= ReadParticipants(message.Payload["participants"]);
-            isChanged |= ReadResult(message.Payload["result"]);
+            var phaseEndsAt = ReadEpochMs(source["phaseEndsAt"]);
+            if (phaseEndsAt != PhaseEndsAtMs)
+            {
+                PhaseEndsAtMs = phaseEndsAt;
+                isChanged = true;
+            }
+
+            isChanged |= ReadParticipants(source["participants"] ?? message.Payload["participants"]);
+            isChanged |= ReadResult(source["result"] ?? message.Payload["result"]);
             return isChanged;
+        }
+
+        // Newtonsoft は ISO 文字列を勝手に Date 型へ変えることがあるので、型に頼らず ToObject で読む
+        private static long? ReadEpochMs(JToken token)
+        {
+            if (token == null || token.Type == JTokenType.Null) return null;
+            return token.ToObject<DateTimeOffset>().ToUnixTimeMilliseconds();
         }
 
         public static bool TryParsePhase(string status, out GamePhase phase)
