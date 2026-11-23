@@ -40,7 +40,13 @@ namespace AKun
             public TextMesh text, valueText;
             public string key = "";
             public float pressedAt = -1e9f;
+            public bool hovered;
+            public int sliderStep = -1;
         }
+
+        // 音を鳴らすための知らせ (ボタンの位置、ワールド)。押した / 指し始めた / スライダーの目盛りを越えた
+        public static Action<Vector3> Pressed, Hovered, Slid;
+        Vector3 WorldPos(Btn b) => group.TransformPoint(new Vector3(b.def.x, b.def.y, 0));
 
         public ButtonPanel(Transform parent, string name, List<ButtonDef> defs, string[] title = null)
         {
@@ -149,6 +155,8 @@ namespace AKun
                 var d = b.def;
                 string label = d.label();
                 bool hov = hover.Contains(d.id);
+                if (hov && !b.hovered && (d.isEnabled == null || d.isEnabled())) Hovered?.Invoke(WorldPos(b));
+                b.hovered = hov;
                 if (d.slider)
                 {
                     float v = d.get();
@@ -248,6 +256,7 @@ namespace AKun
             if (b.def.slider) { SliderTo(b, group.InverseTransformPoint(hit.point).x); return; }
             b.pressedAt = Time.unscaledTime;
             b.def.onPress();
+            Pressed?.Invoke(WorldPos(b));
         }
 
         // つまんだまま動かす: スライダーは、レイが板からはずれても左右の位置で値を決め続ける
@@ -262,6 +271,9 @@ namespace AKun
             var d = b.def;
             float t = Mathf.Clamp01((x - (d.x - d.w / 2)) / d.w * 1.1f - 0.05f);
             d.set(d.min + t * (d.max - d.min));
+            // 20 目盛りごとに小さく鳴らす (なぞっている手ごたえ)
+            int step = Mathf.RoundToInt(t * 20);
+            if (step != b.sliderStep) { if (b.sliderStep >= 0) Slid?.Invoke(WorldPos(b)); b.sliderStep = step; }
         }
 
         // 指先が触れているボタン (なければ null)。localX: 板の上の左右の位置
@@ -297,6 +309,7 @@ namespace AKun
                 pressed = hit.def.id;
                 hit.pressedAt = Time.unscaledTime;
                 hit.def.onPress();
+                Pressed?.Invoke(WorldPos(hit));
             }
         }
 
