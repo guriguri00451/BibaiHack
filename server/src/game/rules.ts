@@ -9,6 +9,8 @@ export const SURVIVE_SCORE = 100;
 /** 外れのときの点（0 = 減点しない） */
 export const MISS_SCORE = 0;
 
+/** 管理画面から次のラウンドを始めるとき、前の設定（cycle）が無ければ使う準備の長さ */
+export const DEFAULT_PREPARING_SECONDS = 120;
 /** rounds/start で playingSeconds を省いたとき、準備の期限が来て自動で本番に入る長さ */
 export const DEFAULT_PLAYING_SECONDS = 180;
 /** フェーズの長さの上限（秒） */

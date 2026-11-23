@@ -53,6 +53,7 @@ YAML
       PUBLIC_URL: https://$PUBLIC_HOST
       DATABASE_URL: postgres://bibai:\${POSTGRES_PASSWORD:?}@postgres:5432/$(db_name "$e")
       JWT_SECRET: \${$(secret_var "$e"):?}
+      ADMIN_TOKEN: \${ADMIN_TOKEN:-}
       STORAGE_DIR: /data/storage
     volumes:
       - storage-$e:/data/storage

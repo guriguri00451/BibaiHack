@@ -1,4 +1,5 @@
 import type { Server } from "bun";
+import type { AdminAccess } from "./config.ts";
 import type { Db } from "./db/client.ts";
 import { createApp } from "./http/app.ts";
 import { externalBase } from "./http/base-url.ts";
@@ -26,6 +27,8 @@ export function createServer(deps: {
   assetStorage?: AssetStorage;
   maps?: MapCatalog;
   logFlushIntervalMs?: number;
+  /** 管理画面の入り方。無ければ管理画面は閉じる */
+  admin?: AdminAccess;
 }) {
   const basePath = deps.basePath ?? "";
   const services = buildServices(deps);

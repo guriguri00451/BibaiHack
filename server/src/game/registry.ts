@@ -1,7 +1,7 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, or } from "drizzle-orm";
 import type { Transform } from "../contracts/transform.ts";
 import type { Db } from "../db/client.ts";
-import { gameObjects, gamePlayers, gameSessions, users } from "../db/schema.ts";
+import { gameObjects, gamePlayers, gameSessions, type RoundCycle, users } from "../db/schema.ts";
 
 export type Role = "hider" | "seeker";
 export type Status = "waiting" | "preparing" | "playing" | "finished";
@@ -51,6 +51,8 @@ export type GameState = {
   objects: Map<string, ObjectState>;
   /** rounds/start で受けた playingSeconds（準備の期限で自動的に本番へ入るときに使う） */
   playingSeconds: number | null;
+  /** 次のラウンドへ自動で進む設定。null ならホストが始める（finished の phaseEndsAt は次のラウンドが始まる時刻） */
+  cycle: RoundCycle | null;
   timer: ReturnType<typeof setTimeout> | null;
   /** フェーズ変更・オブジェクト操作・捕獲を1つずつ順に処理するための鎖 */
   lock: Promise<unknown>;
@@ -117,12 +119,17 @@ export class GameRegistry {
     return all.filter((s): s is GameState => s !== null);
   }
 
-  /** 準備中・本番中のセッションを起動時に読み込む（期限のタイマーを動かすため） */
+  /** 準備中・本番中と、次のラウンドを待っているセッションを起動時に読み込む（期限のタイマーを動かすため） */
   async resumeActive(): Promise<number> {
     const rows = await this.db
       .select({ id: gameSessions.id })
       .from(gameSessions)
-      .where(inArray(gameSessions.status, ["preparing", "playing"]));
+      .where(
+        or(
+          inArray(gameSessions.status, ["preparing", "playing"]),
+          and(eq(gameSessions.status, "finished"), isNotNull(gameSessions.phaseEndsAt), isNotNull(gameSessions.cycle)),
+        ),
+      );
     await Promise.all(rows.map((r) => this.load(r.id)));
     return rows.length;
   }
@@ -206,7 +213,8 @@ export class GameRegistry {
           } satisfies ObjectState,
         ]),
       ),
-      playingSeconds: null,
+      playingSeconds: session.cycle?.playingSeconds ?? null,
+      cycle: session.cycle,
       timer: null,
       lock: Promise.resolve(),
       snapshotSeq: -1,

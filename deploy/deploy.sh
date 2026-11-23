@@ -25,7 +25,8 @@ sync_infra() {
   after=$(ssh_vm "sha256sum $REMOTE_DIR/cloudflared/config.yml")
 
   # 秘密情報は VM 上でだけ作る。足りない鍵だけ足し、既存の値は変えない
-  local vars="POSTGRES_PASSWORD"
+  # ADMIN_TOKEN は管理画面（https://…/<環境>/admin）のトークン。全環境で同じ値
+  local vars="POSTGRES_PASSWORD ADMIN_TOKEN"
   for e in $(envs); do vars="$vars $(secret_var "$e")"; done
   ssh_vm "cd $REMOTE_DIR && umask 077 && touch .env && for v in $vars; do
     grep -q \"^\$v=\" .env || echo \"\$v=\$(openssl rand -hex 32)\" >> .env; done"

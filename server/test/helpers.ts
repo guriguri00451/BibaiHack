@@ -1,3 +1,4 @@
+import type { AdminAccess } from "../src/config.ts";
 import { openDb } from "../src/db/client.ts";
 import { createServer } from "../src/server.ts";
 import type { AssetStorage } from "../src/storage/assets.ts";
@@ -7,7 +8,7 @@ export const JWT_SECRET = "test-secret";
 
 /** PGlite 上でサーバーを起動する。テストファイルの先頭で await し、afterAll で stop を呼ぶ */
 export async function startServer(
-  opts: { basePath?: string; storage?: ObjectStorage; assetStorage?: AssetStorage } = {},
+  opts: { basePath?: string; storage?: ObjectStorage; assetStorage?: AssetStorage; admin?: AdminAccess } = {},
 ) {
   const { db, close } = await openDb({});
   const srv = createServer({
@@ -16,6 +17,7 @@ export async function startServer(
     basePath: opts.basePath,
     storage: opts.storage,
     assetStorage: opts.assetStorage,
+    admin: opts.admin,
   });
   const server = Bun.serve({ port: 0, fetch: srv.fetch, websocket: srv.websocket });
   const base = `http://localhost:${server.port}${opts.basePath ?? ""}`;
