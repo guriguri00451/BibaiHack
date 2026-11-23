@@ -29,12 +29,15 @@ namespace Seeker.App
         {
             BuildUi();
             mapPresenter = new MapPresenter(transform);
-            // シーンに置いていなければ実行時に足す（接続先は SyncedObjectsController の既定値 = モック）
+            // シーンに置いていなければ実行時に足す。接続は StartSync が呼ばれるまでしない
             if (syncedObjects == null) syncedObjects = gameObject.AddComponent<SyncedObjectsController>();
-            syncedObjects.Configure(adapter);
+            syncedObjects.Rejected += () => statusLabel.text = "サーバーに接続を拒否されました";
             syncedObjects.SessionChanged += RenderPhase;
             RenderPhase();
         }
+
+        /// <summary>ゲーム進行側が guest / session を作ったあとに呼び、オブジェクト同期を始める。</summary>
+        public void StartSync(SyncConnection connection) => syncedObjects.Configure(adapter, connection);
 
         private void OnDestroy()
         {
@@ -45,6 +48,7 @@ namespace Seeker.App
 
         private async void Start()
         {
+            if (DevConnectionFile.TryRead(out var devConnection)) StartSync(devConnection);
             try
             {
                 var definition = await new MapService(apiBaseUrl).FetchAsync(mapId);

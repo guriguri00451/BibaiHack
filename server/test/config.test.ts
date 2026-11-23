@@ -27,3 +27,18 @@ describe("loadConfig", () => {
     expect(c.pgliteDir).toBeUndefined();
   });
 });
+
+describe("S3 設定", () => {
+  test("S3_* がすべて無ければ undefined（アップロードURL発行は無効）", () => {
+    expect(loadConfig({ JWT_SECRET: "x" }).s3).toBeUndefined();
+  });
+
+  test("一部だけ設定されていると起動時に失敗する", () => {
+    expect(() => loadConfig({ JWT_SECRET: "x", S3_BUCKET: "b" })).toThrow("S3_ENDPOINT");
+  });
+
+  test("すべてそろっていれば設定として読む", () => {
+    const env = { JWT_SECRET: "x", S3_ENDPOINT: "https://e", S3_BUCKET: "b", S3_ACCESS_KEY_ID: "k", S3_SECRET_ACCESS_KEY: "s" };
+    expect(loadConfig(env).s3?.bucket).toBe("b");
+  });
+});

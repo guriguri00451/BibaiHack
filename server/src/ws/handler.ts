@@ -2,6 +2,9 @@ import type { ServerWebSocket, WebSocketHandler } from "bun";
 import { verifyToken } from "../auth/token.ts";
 import { normalizeTransform } from "../contracts/transform.ts";
 import { ClientMessageSchema, type ServerMessage, WS_CLOSE } from "../contracts/ws.ts";
+import type { AssetStorage } from "../storage.ts";
+import type { Connections } from "../game/connections.ts";
+import { publishObjectEvent, toWireObject, visibleObjects } from "../game/objects.ts";
 import { canSeePlayerPose, type GameRegistry, type GameState } from "../game/registry.ts";
 
 export type WsData = {
@@ -14,10 +17,13 @@ type Socket = ServerWebSocket<WsData>;
 /** 接続後この時間内に auth が来なければ切る */
 const AUTH_TIMEOUT_MS = 5_000;
 
-export function createWsHandler(deps: { registry: GameRegistry; jwtSecret: string }) {
-  const { registry, jwtSecret } = deps;
-  /** sessionId → playerId → 接続 */
-  const conns = new Map<string, Map<string, Socket>>();
+export function createWsHandler(deps: {
+  registry: GameRegistry;
+  connections: Connections;
+  jwtSecret: string;
+  assetStorage?: AssetStorage;
+}) {
+  const { registry, connections: conns, jwtSecret, assetStorage } = deps;
 
   const send = (ws: Socket, msg: ServerMessage): void => void ws.send(JSON.stringify(msg));
   const sendError = (ws: Socket, code: string, message: string): void =>
@@ -46,6 +52,7 @@ export function createWsHandler(deps: { registry: GameRegistry; jwtSecret: strin
           connected: p.connected,
           transform: canSeePlayerPose(state, me, p) ? p.transform : null,
         })),
+        objects: visibleObjects(state, me).map((o) => toWireObject(o, assetStorage)),
       },
     };
   }
@@ -63,11 +70,7 @@ export function createWsHandler(deps: { registry: GameRegistry; jwtSecret: strin
     ws.data.sessionId = sessionId;
     ws.data.playerId = player.playerId;
 
-    let room = conns.get(sessionId);
-    if (!room) conns.set(sessionId, (room = new Map()));
-    const old = room.get(player.playerId);
-    room.set(player.playerId, ws);
-    old?.close(WS_CLOSE.REPLACED, "replaced by a new connection");
+    conns.set(sessionId, player.playerId, ws)?.close(WS_CLOSE.REPLACED, "replaced by a new connection");
 
     player.connected = true;
     // 再接続したら clientSeq は振り出しから数え直してよい
@@ -120,10 +123,25 @@ export function createWsHandler(deps: { registry: GameRegistry; jwtSecret: strin
             payload: { playerId, transform: me.transform },
           };
           const text = JSON.stringify(out);
-          for (const [otherId, sock] of conns.get(sessionId) ?? []) {
+          for (const [otherId, sock] of conns.entries(sessionId)) {
             const other = state.players.get(otherId);
             if (otherId !== playerId && other && canSeePlayerPose(state, other, me)) sock.send(text);
           }
+          return;
+        }
+        case "object.transform": {
+          const object = state.objects.get(msg.payload.objectId);
+          // 所有者以外・存在しない・古い送信は黙って捨てる（PATCH で確定するまで DB には書かない）
+          if (!object || object.playerId !== playerId) return;
+          if (msg.payload.clientSeq <= object.lastClientSeq) return;
+          object.lastClientSeq = msg.payload.clientSeq;
+          object.transform = normalizeTransform(msg.payload.transform);
+          publishObjectEvent(
+            state,
+            conns,
+            { type: "object.transform", payload: { objectId: object.objectId, transform: object.transform } },
+            playerId,
+          );
           return;
         }
       }
@@ -133,10 +151,8 @@ export function createWsHandler(deps: { registry: GameRegistry; jwtSecret: strin
       clearTimeout(ws.data.authTimer);
       const { sessionId, playerId } = ws.data;
       if (!sessionId || !playerId) return;
-      const room = conns.get(sessionId);
-      if (room?.get(playerId) !== ws) return; // 入れ替わった古い接続
-      room.delete(playerId);
-      if (room.size === 0) conns.delete(sessionId);
+      if (conns.get(sessionId, playerId) !== ws) return; // 入れ替わった古い接続
+      conns.delete(sessionId, playerId);
       const state = await registry.load(sessionId);
       const me = state?.players.get(playerId);
       if (me) me.connected = false;

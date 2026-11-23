@@ -109,6 +109,28 @@ namespace Seeker.Ar.Tests
             $"{{\"objectId\":\"{id}\",\"assetKey\":\"{key}\",\"transform\":{Transform}}}";
 
         [Test]
+        public void Apply_Created_CarriesAssetUrlFromPayload()
+        {
+            var store = new SyncedObjectStore();
+
+            var changes = store.Apply(Message("object.created", 1, 1,
+                $"{{\"objectId\":\"a\",\"assetKey\":\"k\",\"assetUrl\":\"https://s/k?sig=1\",\"transform\":{Transform}}}"));
+
+            Assert.That(changes[0].assetUrl, Is.EqualTo("https://s/k?sig=1"));
+        }
+
+        [Test]
+        public void Apply_Updated_DoesNotReportAssetChange_WhenOnlySignedUrlChanged()
+        {
+            var store = new SyncedObjectStore();
+            store.Apply(Message("object.created", 1, 1, $"{{\"objectId\":\"a\",\"assetKey\":\"k\",\"assetUrl\":\"https://s/k?sig=1\",\"transform\":{Transform}}}"));
+
+            var changes = store.Apply(Message("object.updated", 1, 2, "{\"objectId\":\"a\",\"assetKey\":\"k\",\"assetUrl\":\"https://s/k?sig=2\"}"));
+
+            Assert.That(changes, Is.Empty);
+        }
+
+        [Test]
         public void Apply_Snapshot_AddsObjects()
         {
             var store = new SyncedObjectStore();
@@ -213,6 +235,45 @@ namespace Seeker.Ar.Tests
             var message = Message("object.created", 1, 1, "{\"objectId\":\"a\",\"assetKey\":\"k\",\"transform\":{\"position\":[0,0,0],\"rotation\":[0,0,0,0],\"scale\":[1,1,1]}}");
 
             Assert.Throws<System.FormatException>(() => new SyncedObjectStore().Apply(message));
+        }
+    }
+
+    public class SyncConnectionTests
+    {
+        [Test]
+        public void FromBaseUrl_BuildsWssAndHttpsUrls_FromHttpsEnvironmentUrl()
+        {
+            var connection = SyncConnection.FromBaseUrl("https://bibai.t0waxx.com/so-ma-01", "session", "token");
+
+            Assert.That(connection.WsUrl, Is.EqualTo("wss://bibai.t0waxx.com/so-ma-01/v1/ws"));
+        }
+
+        [Test]
+        public void FromBaseUrl_BuildsHttpsRestBase_FromHttpsEnvironmentUrl()
+        {
+            var connection = SyncConnection.FromBaseUrl("https://bibai.t0waxx.com/so-ma-01", "session", "token");
+
+            Assert.That(connection.RestBaseUrl, Is.EqualTo("https://bibai.t0waxx.com/so-ma-01/v1"));
+        }
+
+        [Test]
+        public void FromBaseUrl_BuildsWsUrl_FromHttpLocalUrlWithTrailingSlash()
+        {
+            var connection = SyncConnection.FromBaseUrl("http://192.168.0.5:8787/", "session", "token");
+
+            Assert.That(connection.WsUrl, Is.EqualTo("ws://192.168.0.5:8787/v1/ws"));
+        }
+
+        [Test]
+        public void FromBaseUrl_Throws_WhenSchemeIsNotHttp()
+        {
+            Assert.Throws<System.ArgumentException>(() => SyncConnection.FromBaseUrl("ftp://example.com", "session", "token"));
+        }
+
+        [Test]
+        public void Constructor_Throws_WhenAccessTokenIsEmpty()
+        {
+            Assert.Throws<System.ArgumentException>(() => new SyncConnection("wss://x/v1/ws", "https://x/v1", "session", ""));
         }
     }
 }

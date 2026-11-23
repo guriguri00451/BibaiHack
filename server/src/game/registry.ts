@@ -1,7 +1,8 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Transform } from "../contracts/transform.ts";
 import type { Db } from "../db/client.ts";
-import { gamePlayers, gameSessions, users } from "../db/schema.ts";
+import { gameObjects, gamePlayers, gameSessions, users } from "../db/schema.ts";
+import type { ObjectState } from "./objects.ts";
 
 type Role = "hider" | "seeker";
 type Status = "waiting" | "preparing" | "playing" | "finished";
@@ -27,6 +28,8 @@ export type GameState = {
   /** ラウンド内のサーバー確定順序 */
   seq: number;
   players: Map<string, PlayerState>;
+  /** 現在のラウンドのオブジェクト（objectId → 状態） */
+  objects: Map<string, ObjectState>;
 };
 
 /**
@@ -97,12 +100,30 @@ export class GameRegistry {
       .innerJoin(users, eq(users.id, gamePlayers.userId))
       .where(eq(gamePlayers.sessionId, sessionId))
       .orderBy(asc(gamePlayers.createdAt));
+    const objectRows = await this.db
+      .select()
+      .from(gameObjects)
+      .where(and(eq(gameObjects.round, session.round), inArray(gameObjects.playerId, rows.map((r) => r.playerId))))
+      .orderBy(asc(gameObjects.createdAt));
     return {
       sessionId,
       status: session.status,
       round: session.round,
       phaseEndsAt: session.phaseEndsAt,
       seq: 0,
+      objects: new Map(
+        objectRows.map((o) => [
+          o.id,
+          {
+            objectId: o.id,
+            playerId: o.playerId,
+            assetKey: o.assetUrl,
+            transform: o.transform,
+            isDisguise: o.isDisguise,
+            lastClientSeq: -1,
+          } satisfies ObjectState,
+        ]),
+      ),
       players: new Map(
         rows.map((r) => [
           r.playerId,

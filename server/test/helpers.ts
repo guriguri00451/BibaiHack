@@ -1,12 +1,13 @@
 import { openDb } from "../src/db/client.ts";
+import type { AssetStorage } from "../src/storage.ts";
 import { createServer } from "../src/server.ts";
 
 export const JWT_SECRET = "test-secret";
 
 /** PGlite 上でサーバーを起動する。テストファイルの先頭で await し、afterAll で stop を呼ぶ */
-export async function startServer(opts: { basePath?: string } = {}) {
+export async function startServer(opts: { basePath?: string; assetStorage?: AssetStorage } = {}) {
   const { db, close } = await openDb({});
-  const srv = createServer({ db, jwtSecret: JWT_SECRET, basePath: opts.basePath });
+  const srv = createServer({ db, jwtSecret: JWT_SECRET, basePath: opts.basePath, assetStorage: opts.assetStorage });
   const server = Bun.serve({ port: 0, fetch: srv.fetch, websocket: srv.websocket });
   const base = `http://localhost:${server.port}${opts.basePath ?? ""}`;
 
@@ -19,7 +20,9 @@ export async function startServer(opts: { basePath?: string } = {}) {
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    return { status: res.status, body: (await res.json()) as any };
+    // 204 など本文の無い応答もある
+    const text = await res.text();
+    return { status: res.status, body: (text ? JSON.parse(text) : undefined) as any };
   }
   const post = async (path: string, body: unknown, token?: string) =>
     (await request("POST", path, body, token)).body;

@@ -8,8 +8,9 @@ namespace Seeker.Sync
     /// <summary>
     /// サーバーから届いたオブジェクトの最新状態。メッセージを適用して「何が変わったか」を返す純ロジック。
     /// payload の形は仕様に明記が無いため、ここ(と ServerMessage)に閉じ込めている。想定:
-    ///   session.snapshot: { round?, seq?, objects: [{ objectId, assetKey|assetUrl, transform }] }
-    ///   object.created / object.updated: { objectId, assetKey|assetUrl?, transform? }
+    ///   session.snapshot: { objects: [{ objectId, assetKey, assetUrl, transform }] }
+    ///   object.created / object.updated: { objectId, assetKey?, assetUrl?, transform? }
+    /// assetKey は永続キー（キャッシュ・差し替え判定用）、assetUrl はそのまま GET できる署名付きURL（仕様 §6.3）。
     ///   object.deleted: { objectId } / object.transform: { objectId, transform }
     /// </summary>
     public sealed class SyncedObjectStore
@@ -17,6 +18,7 @@ namespace Seeker.Sync
         private sealed class Entry
         {
             public string assetKey;
+            public string assetUrl;
             public MapTransform transform;
         }
 
@@ -86,27 +88,30 @@ namespace Seeker.Sync
         {
             var id = (string)payload["objectId"];
             if (string.IsNullOrEmpty(id)) throw new FormatException("objectId が無い");
-            var assetKey = (string)(payload["assetKey"] ?? payload["assetUrl"]);
+            var assetUrl = (string)payload["assetUrl"];
+            // キーが無い配信（URL だけ）でも動くよう、URL をキー代わりにする
+            var assetKey = (string)payload["assetKey"] ?? assetUrl;
             var hasTransform = payload["transform"] != null && payload["transform"].Type != JTokenType.Null;
             var transform = hasTransform ? ServerMessage.ParseTransform(payload["transform"]) : MapTransform.Identity;
 
             if (!objects.TryGetValue(id, out var entry))
             {
                 if (string.IsNullOrEmpty(assetKey)) throw new FormatException($"新規オブジェクト {id} に assetKey が無い");
-                objects[id] = new Entry { assetKey = assetKey, transform = transform };
-                changes.Add(new SyncChange(SyncChangeKind.Added, id, assetKey, transform));
+                objects[id] = new Entry { assetKey = assetKey, assetUrl = assetUrl, transform = transform };
+                changes.Add(new SyncChange(SyncChangeKind.Added, id, assetKey, assetUrl, transform));
                 return;
             }
 
             if (!string.IsNullOrEmpty(assetKey) && assetKey != entry.assetKey)
             {
                 entry.assetKey = assetKey;
-                changes.Add(new SyncChange(SyncChangeKind.AssetChanged, id, assetKey, entry.transform));
+                entry.assetUrl = assetUrl;
+                changes.Add(new SyncChange(SyncChangeKind.AssetChanged, id, assetKey, assetUrl, entry.transform));
             }
             if (hasTransform)
             {
                 entry.transform = transform;
-                changes.Add(new SyncChange(SyncChangeKind.TransformChanged, id, entry.assetKey, transform));
+                changes.Add(new SyncChange(SyncChangeKind.TransformChanged, id, entry.assetKey, entry.assetUrl, transform));
             }
         }
 
@@ -116,13 +121,13 @@ namespace Seeker.Sync
             // created より先に transform が届いた場合などは、状態を持っていないので捨てる（次の snapshot / created で揃う）
             if (id == null || !objects.TryGetValue(id, out var entry)) return;
             entry.transform = ServerMessage.ParseTransform(payload["transform"]);
-            changes.Add(new SyncChange(SyncChangeKind.TransformChanged, id, entry.assetKey, entry.transform));
+            changes.Add(new SyncChange(SyncChangeKind.TransformChanged, id, entry.assetKey, entry.assetUrl, entry.transform));
         }
 
         private void Remove(string id, List<SyncChange> changes)
         {
             if (id == null || !objects.Remove(id)) return;
-            changes.Add(new SyncChange(SyncChangeKind.Removed, id, null, MapTransform.Identity));
+            changes.Add(new SyncChange(SyncChangeKind.Removed, id, null, null, MapTransform.Identity));
         }
     }
 }

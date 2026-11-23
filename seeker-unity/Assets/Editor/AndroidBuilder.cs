@@ -19,19 +19,24 @@ namespace Seeker.Editor
             "Shader Graphs/glTF-pbrSpecularGlossiness",
         };
 
-        public static void Build()
+        /// <summary>開発用（Development ビルド）。ローカルサーバー（http）に繋ぐため平文HTTPを許可し、dev-connection.json を読む。</summary>
+        public static void Build() => BuildApk(InsecureHttpOption.AlwaysAllowed, BuildOptions.Development);
+
+        /// <summary>リリース用。平文HTTPを禁止するので、https / wss の実サーバーにしか繋がらない。</summary>
+        public static void BuildRelease() => BuildApk(InsecureHttpOption.NotAllowed, BuildOptions.None);
+
+        private static void BuildApk(InsecureHttpOption insecureHttpOption, BuildOptions buildOptions)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(OutputPath));
             EnsureGltfastShadersIncluded();
-            // 開発中のモックサーバーは http。既定(禁止)だと署名URL取得とGLBダウンロードが失敗する。
-            // 本番サーバーは https 前提なので、リリースビルドでは外すこと
-            PlayerSettings.insecureHttpOption = InsecureHttpOption.AlwaysAllowed;
+            // ProjectSettings に書き戻されるので、ビルドのたびに明示して前回の値を持ち越さない
+            PlayerSettings.insecureHttpOption = insecureHttpOption;
             var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
             {
                 scenes = new[] { "Assets/Scenes/SeekerAr.unity" },
                 locationPathName = OutputPath,
                 target = BuildTarget.Android,
-                options = BuildOptions.None,
+                options = buildOptions,
             });
             if (report.summary.result != BuildResult.Succeeded)
                 throw new Exception($"Android build failed: {report.summary.result} ({report.summary.totalErrors} errors)");

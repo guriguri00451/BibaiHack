@@ -1,4 +1,5 @@
 import { z } from "@hono/zod-openapi";
+import { TransformSchema } from "./transform.ts";
 
 export const ROLES = ["hider", "seeker"] as const;
 export const SESSION_STATUSES = ["waiting", "preparing", "playing", "finished"] as const;
@@ -74,3 +75,55 @@ export const SessionDetailSchema = z
     players: z.array(PlayerSchema),
   })
   .openapi("SessionDetail");
+
+// ---- objects ----
+
+/** 仕様書 5.1 の assetKey。所属セッションはキーの中に入っている */
+export const ASSET_KEY_PATTERN = /^sessions\/([0-9a-f-]{36})\/assets\/[A-Za-z0-9._-]{1,128}\.glb$/;
+
+export const AssetKeySchema = z
+  .string()
+  .regex(ASSET_KEY_PATTERN, "assetKey must look like sessions/<session-id>/assets/<name>.glb")
+  .openapi({ example: "sessions/00000000-0000-4000-8000-000000000000/assets/a.glb" });
+
+export const ObjectParamSchema = z.object({
+  id: z.uuid().openapi({ param: { name: "id", in: "path" } }),
+  objectId: z.uuid().openapi({ param: { name: "objectId", in: "path" } }),
+});
+
+// POST /v1/sessions/{id}/objects
+export const CreateObjectRequestSchema = z
+  .object({ assetKey: AssetKeySchema, transform: TransformSchema })
+  .openapi("CreateObjectRequest");
+
+export const CreateObjectResponseSchema = z
+  .object({ id: z.uuid(), round: z.int().min(1) })
+  .openapi("CreateObjectResponse");
+
+// PATCH /v1/sessions/{id}/objects/{objectId}
+export const UpdateObjectRequestSchema = z
+  .object({ assetKey: AssetKeySchema.optional(), transform: TransformSchema.optional() })
+  .refine((v) => v.assetKey !== undefined || v.transform !== undefined, {
+    message: "assetKey or transform is required",
+  })
+  .openapi("UpdateObjectRequest");
+
+export const ObjectResponseSchema = z
+  .object({ id: z.uuid(), assetKey: z.string(), transform: TransformSchema })
+  .openapi("Object");
+
+// POST /v1/assets/uploads
+export const ASSET_CONTENT_TYPE = "model/gltf-binary";
+export const ASSET_MAX_BYTES = 20 * 1024 * 1024;
+
+export const CreateUploadRequestSchema = z
+  .object({
+    sessionId: z.uuid(),
+    contentType: z.literal(ASSET_CONTENT_TYPE),
+    sizeBytes: z.int().min(1).max(ASSET_MAX_BYTES),
+  })
+  .openapi("CreateUploadRequest");
+
+export const CreateUploadResponseSchema = z
+  .object({ assetKey: AssetKeySchema, uploadUrl: z.url() })
+  .openapi("CreateUploadResponse");
