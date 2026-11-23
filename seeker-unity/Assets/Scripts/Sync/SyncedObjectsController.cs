@@ -14,6 +14,7 @@ namespace Seeker.Sync
         private readonly SyncedObjectStore store = new SyncedObjectStore();
         private readonly GameSessionState session = new GameSessionState();
         private readonly Dictionary<string, SyncedObjectView> views = new Dictionary<string, SyncedObjectView>();
+        private readonly ServerClock clock = new ServerClock(ServerClock.SystemNowMs);
         private CoordinateAdapter adapter;
         private SeekerWsClient client;
         private GlbCache glbCache;
@@ -22,6 +23,7 @@ namespace Seeker.Sync
         public event Action Rejected;
 
         public GameSessionState Session => session;
+        public ServerClock Clock => clock;
 
         /// <summary>フェーズ・ラウンド・参加者・結果のいずれかが変わったとき。</summary>
         public event Action SessionChanged;
@@ -66,6 +68,7 @@ namespace Seeker.Sync
             try
             {
                 var message = ServerMessage.Parse(json);
+                if (message.Timestamp.HasValue) clock.Observe(message.Timestamp.Value);
                 if (session.Apply(message)) SessionChanged?.Invoke();
                 changes = store.Apply(message);
             }

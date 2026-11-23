@@ -11,13 +11,16 @@ namespace Seeker.Sync
         public string Type { get; }
         public long? Round { get; }
         public long? Seq { get; }
+        /// <summary>送信時のサーバー時刻（Unix ms）。</summary>
+        public long? Timestamp { get; }
         public JObject Payload { get; }
 
-        private ServerMessage(string type, long? round, long? seq, JObject payload)
+        private ServerMessage(string type, long? round, long? seq, long? timestamp, JObject payload)
         {
             Type = type;
             Round = round;
             Seq = seq;
+            Timestamp = timestamp;
             Payload = payload;
         }
 
@@ -26,7 +29,7 @@ namespace Seeker.Sync
             var root = JObject.Parse(json);
             var type = (string)root["type"];
             if (string.IsNullOrEmpty(type)) throw new FormatException("WSMessage に type が無い");
-            return new ServerMessage(type, (long?)root["round"], (long?)root["seq"], root["payload"] as JObject ?? new JObject());
+            return new ServerMessage(type, (long?)root["round"], (long?)root["seq"], (long?)root["timestamp"], root["payload"] as JObject ?? new JObject());
         }
 
         /// <summary>{"position":[x,y,z],"rotation":[x,y,z,w],"scale":[x,y,z]} を共有マップ座標のまま読む。</summary>
