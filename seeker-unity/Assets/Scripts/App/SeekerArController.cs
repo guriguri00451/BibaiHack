@@ -16,7 +16,6 @@ namespace Seeker.App
     {
         [SerializeField] private ARTrackedImageManager imageManager;
         [SerializeField] private SyncedObjectsController syncedObjects;
-        // サーバーにつないでいなければこのマップ（モック）。つないだらセッションのマップ（ホストが選ぶ）に従う
         [SerializeField] private string mapId = "bibai-museum";
         // 空ならモック(StreamingAssets/mock)を使う。API 実装後に https://host/v1 を入れる
         [SerializeField] private string apiBaseUrl = "";
@@ -25,9 +24,6 @@ namespace Seeker.App
         private MapPresenter mapPresenter;
         private Text statusLabel;
         private PhasePanelsView phasePanels;
-        private SyncConnection connection;
-        private string loadedMapId;
-        private string loadingMapId;
 
         private void Awake()
         {
@@ -41,45 +37,22 @@ namespace Seeker.App
         }
 
         /// <summary>ゲーム進行側が guest / session を作ったあとに呼び、オブジェクト同期を始める。</summary>
-        public void StartSync(SyncConnection connection)
-        {
-            this.connection = connection;
-            syncedObjects.Configure(adapter, connection);
-        }
+        public void StartSync(SyncConnection connection) => syncedObjects.Configure(adapter, connection);
 
         private void OnDestroy()
         {
             if (syncedObjects != null) syncedObjects.SessionChanged -= RenderPhase;
         }
 
-        private void RenderPhase()
-        {
-            phasePanels.Render(syncedObjects.Session);
-            // ホストがマップを替えたら読み直す（待機中・ラウンドの後だけ替わる）
-            var sessionMapId = syncedObjects.Session.MapId;
-            if (!string.IsNullOrEmpty(sessionMapId) && sessionMapId != loadedMapId && sessionMapId != loadingMapId) LoadMap(sessionMapId);
-        }
+        private void RenderPhase() => phasePanels.Render(syncedObjects.Session);
 
-        private void Start()
+        private async void Start()
         {
             if (DevConnectionFile.TryRead(out var devConnection)) StartSync(devConnection);
-            // つないでいれば snapshot の mapId を待つ（RenderPhase で読む）
-            if (connection == null) LoadMap(mapId);
-        }
-
-        private async void LoadMap(string id)
-        {
-            loadingMapId = id;
             try
             {
-                // つないでいればサーバーの GET /maps/{id}。でなければ apiBaseUrl（空ならモック）
-                var service = connection != null
-                    ? new MapService(connection.RestBaseUrl, connection.AccessToken)
-                    : new MapService(apiBaseUrl);
-                var definition = await service.FetchAsync(id);
-                if (loadingMapId != id) return; // 読んでいる間に別のマップに替わった
+                var definition = await new MapService(apiBaseUrl).FetchAsync(mapId);
                 await mapPresenter.LoadAsync(definition);
-                loadedMapId = id;
                 // 読み込み前にマーカーを捉えていた場合に備えて、ここでも置く
                 mapPresenter.Place(adapter);
             }
@@ -87,10 +60,6 @@ namespace Seeker.App
             {
                 Debug.LogException(e);
                 statusLabel.text = "マップの読み込みに失敗しました";
-            }
-            finally
-            {
-                if (loadingMapId == id) loadingMapId = null;
             }
         }
 

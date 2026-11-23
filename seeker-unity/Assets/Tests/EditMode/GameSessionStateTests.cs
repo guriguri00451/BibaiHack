@@ -19,28 +19,6 @@ namespace Seeker.Ar.Tests
         }
 
         [Test]
-        public void Apply_ReadsMapId_FromSnapshotSession()
-        {
-            var state = new GameSessionState();
-
-            var isChanged = state.Apply(Message("session.snapshot", 1, "{\"session\":{\"status\":\"waiting\",\"mapId\":\"bibai-station\"}}"));
-
-            Assert.That(isChanged, Is.True);
-            Assert.That(state.MapId, Is.EqualTo("bibai-station"));
-        }
-
-        [Test]
-        public void Apply_KeepsMapId_WhenPhaseChangedHasNone()
-        {
-            var state = new GameSessionState();
-            state.Apply(Message("session.snapshot", 1, "{\"session\":{\"mapId\":\"bibai-station\"}}"));
-
-            state.Apply(Message("session.phase_changed", 1, "{\"status\":\"preparing\"}"));
-
-            Assert.That(state.MapId, Is.EqualTo("bibai-station"));
-        }
-
-        [Test]
         public void Apply_ReturnsFalse_WhenPhaseDoesNotChange()
         {
             var state = new GameSessionState();
